@@ -1,0 +1,42 @@
+# Compiled executables
+example_3d_pencil
+example_4d_pencil
+minimal_3d_fft
+test/test_mpi_constant_32
+test/test_mpi_gaussian_roundtrip
+test/test_8cubed
+test/test_4d_roundtrip
+test/reference_serial_3d
+benchmark/benchmark_serial
+benchmark/benchmark_mpi
+
+# Object files
+*.o
+*.obj
+
+# Debug symbols (macOS)
+*.dSYM/
+
+# Test output files
+*.txt
+test/*.txt
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Editor/IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build directories
+build/
+dist/
+
+# Temporary files
+*.tmp
+*.bak

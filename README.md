@@ -1,0 +1,323 @@
+# MPI-Parallel Multidimensional FFT
+
+A C++ implementation of multidimensional parallel FFT using MPI, based on the algorithm described in:
+
+**Dalcin, L., Mortensen, M., & Keyes, D. E. (2019). Fast parallel multidimensional FFT using advanced MPI. Journal of Parallel and Distributed Computing.**
+
+## Status
+
+**Fully Working**: Both forward and backward transforms tested and validated
+
+### Complex-to-Complex (C2C) Transforms
+- **3D FFT**: Tested with constant, Gaussian, and arbitrary data
+- **4D FFT**: Tested with constant and Gaussian data
+- **5D & 6D FFT**: Tested with Gaussian distributions
+- **Serial vs MPI**: Exact match (verified with comparison tests)
+- **Generic Implementation**: Dimension-agnostic template for arbitrary D
+
+### Real-to-Complex (R2C) / Complex-to-Real (C2R) Transforms
+- **3D R2C/C2R FFT**: Full roundtrip support (real → complex → real)
+- **Grid sizes**: Validated for 8³, 24³, 32³, 100³
+- **Roundtrip accuracy**: < 1e-15 error across all configurations
+- **Process counts**: Tested with 4 and 8 MPI processes
+
+## Features
+
+- **Dimension-agnostic**: Generic template supports arbitrary dimensions (3D, 4D, 5D, 6D, ...)
+- **Three implementations**:
+  - `mpifft_generic.hpp`: Dimension-agnostic C2C template (recommended for complex data)
+  - `mpifft_r2c.hpp`: R2C/C2R transforms for real-valued data (memory efficient)
+  - `mpifft_pencil.hpp`: Specialized 3D and 4D C2C versions (legacy)
+- **MPI parallelization**: Distributes up to (D-1) dimensions across processor grids
+- **No local transposes**: Uses MPI subarray datatypes with `MPI_Alltoallw` to eliminate local data rearrangements
+- **FFTW3 backend**: Uses FFTW3 for efficient 1D FFT operations
+- **User-friendly API**: Simple `PencilFFT<D>` and `PencilFFT_R2C<D>` template interfaces
+
+## Quick Start
+
+```bash
+# Navigate to test directory (important: all tests should be run from here)
+cd test
+
+# Build all tests
+make all
+
+# Run all tests
+make run-all
+
+# Compare serial vs MPI (validates exact match)
+make compare
+
+# Run R2C roundtrip tests specifically
+bash run_r2c_roundtrip_tests.sh
+```
+
+## Key Algorithm Details
+
+### Global Redistribution Method
+
+Unlike traditional methods that require:
+1. Local transpose/remapping operations
+2. `MPI_Alltoall` communication of contiguous buffers
+
+This implementation:
+1. Uses `MPI_Type_create_subarray` to describe discontiguous memory layouts
+2. Performs direct exchange with `MPI_Alltoallw` - **no local transposes needed**
+
+### Decomposition Strategy
+
+- Uses **balanced block-contiguous decomposition** (Equation 9 from paper)
+- Creates **(D-1)-dimensional Cartesian processor grids**
+- Each axis (except the last) can be distributed across a processor subgroup
+
+### Execution Flow (3D Example)
+
+For a 3D array on a 2D processor grid:
+
+1. **Stage A**: Distributed in axes 0,1; local in axis 2
+   - FFT along axis 2 (Z)
+   - Redistribute: axis 2 → axis 1
+2. **Stage B**: Distributed in axes 0,2; local in axis 1
+   - FFT along axis 1 (Y)
+   - Redistribute: axis 1 → axis 0
+3. **Stage C**: Distributed in axes 1,2; local in axis 0
+   - FFT along axis 0 (X)
+
+Total: **3 FFTs** and **2 global redistributions**
+
+### R2C/C2R Data Layout
+
+For R2C transforms, the last axis is reduced from N to N/2+1 in complex space due to Hermitian symmetry:
+- **Real input**: `[N₀, N₁, N₂]`
+- **Complex output**: `[N₀, N₁, N₂/2+1]`
+
+## Requirements
+
+- MPI implementation (OpenMPI, MPICH, etc.)
+- FFTW3 library
+- C++11 compatible compiler
+- Python3 (for comparison scripts)
+
+## Building
+
+```bash
+# Build examples
+mpicxx example_3d_pencil.cpp -o example_3d_pencil -std=c++11 -I/opt/homebrew/include -L/opt/homebrew/lib -lfftw3
+mpicxx example_4d_pencil.cpp -o example_4d_pencil -std=c++11 -I/opt/homebrew/include -L/opt/homebrew/lib -lfftw3
+
+# Or use the test Makefile
+cd test
+make all
+```
+
+## Running
+
+```bash
+# 3D example (4 MPI ranks)
+mpirun -n 4 ./example_3d_pencil
+
+# 4D example (8 MPI ranks)
+mpirun -n 8 ./example_4d_pencil
+
+# Run comprehensive tests
+cd test
+make run-all
+```
+
+## Usage Examples
+
+### Complex-to-Complex (C2C) Transform
+
+```cpp
+#include "mpifft_generic.hpp"
+
+int main(int argc, char** argv) {
+    MPI_Init(&argc, &argv);
+
+    // Works for any dimension!
+    int global_shape[3] = {32, 32, 32};
+    mpifft::PencilFFT<3> fft(global_shape);
+
+    // Allocate local data
+    int local_size = fft.get_local_size();
+    std::vector<std::complex<double>> data(local_size);
+
+    // Initialize data...
+    int local_shape[3], global_start[3];
+    fft.get_local_shape(local_shape);
+    fft.get_global_start(global_start);
+
+    // Forward FFT (in-place)
+    fft.forward(data.data());
+
+    // Backward FFT (in-place)
+    fft.backward(data.data());
+
+    // Normalize (FFTW convention)
+    double scale = 1.0 / (global_shape[0] * global_shape[1] * global_shape[2]);
+    for (auto& val : data) val *= scale;
+
+    MPI_Finalize();
+    return 0;
+}
+```
+
+### Real-to-Complex (R2C) / Complex-to-Real (C2R) Transform
+
+```cpp
+#include "mpifft_r2c.hpp"
+
+int main(int argc, char** argv) {
+    MPI_Init(&argc, &argv);
+
+    int global_shape[3] = {32, 32, 32};
+    mpifft::PencilFFT_R2C<3> fft(global_shape);
+
+    // Get local sizes
+    int local_real_size = fft.get_local_real_size();
+    int local_complex_size = fft.get_local_complex_size();
+
+    // Allocate arrays
+    std::vector<double> real_data(local_real_size);
+    std::vector<double> real_result(local_real_size);
+    std::vector<std::complex<double>> complex_data(local_complex_size);
+
+    // Initialize real data...
+    int local_real_shape[3], real_start[3];
+    fft.get_local_real_shape(local_real_shape);
+    fft.get_real_global_start(real_start);
+
+    // Forward R2C FFT: real -> complex
+    fft.forward(real_data.data(), complex_data.data());
+
+    // ... process in frequency domain ...
+
+    // Backward C2R FFT: complex -> real
+    fft.backward(complex_data.data(), real_result.data());
+
+    // Normalize (FFTW convention)
+    long long total_size = (long long)global_shape[0] * global_shape[1] * global_shape[2];
+    double scale = 1.0 / total_size;
+    for (auto& val : real_result) val *= scale;
+
+    MPI_Finalize();
+    return 0;
+}
+```
+
+## Testing
+
+Comprehensive test suite in `test/` directory:
+
+### C2C Tests
+
+#### Specialized Implementation
+- **test_mpi_constant_32**: 32³ constant values
+- **test_mpi_gaussian_roundtrip**: 32³ Gaussian distribution with file output
+- **test_8cubed**: 8³ sequential values
+- **test_4d_roundtrip**: 4⁴ constant values
+- **reference_serial_3d**: Serial FFTW reference for validation
+
+#### Generic Implementation
+- **test_generic_3d_gaussian**: 32³ Gaussian (validates exact match with specialized)
+- **test_generic_4d_gaussian**: 16⁴ Gaussian
+- **test_generic_4d_small**: 4⁴ edge case (non-uniform processor grid)
+- **test_generic_5d_gaussian**: 8⁵ Gaussian
+- **test_generic_6d_gaussian**: 6⁶ Gaussian
+
+### R2C/C2R Tests
+- **test_mpi_r2c_gaussian**: Forward R2C transform validation
+- **test_mpi_r2c_roundtrip**: Full roundtrip (R2C → C2R) accuracy test
+- **run_r2c_roundtrip_tests.sh**: Comprehensive test script for multiple grid sizes and process counts
+
+Run tests:
+```bash
+cd test
+make run-specialized   # Run specialized C2C tests
+make run-generic       # Run generic C2C tests
+make run-all           # Run all tests
+make compare           # Verify MPI matches serial FFTW exactly
+
+# R2C roundtrip tests
+bash run_r2c_roundtrip_tests.sh  # Tests 8³, 24³, 32³, 100³ with 4 and 8 processes
+```
+
+See `test/README.md` for detailed test documentation.
+
+## Code Structure
+
+### Main Headers
+
+#### `mpifft_generic.hpp` (Recommended for C2C)
+Dimension-agnostic template library for complex-to-complex transforms:
+- **`decompose()`**: Balanced block-contiguous decomposition
+- **`subarray()`**: MPI subarray datatype creation
+- **`exchange()`**: Global redistribution via `MPI_Alltoallw`
+- **`PencilFFT<D>`**: Template class for arbitrary D-dimensional FFT
+  - Constructor: Creates (D-1)D processor grid automatically
+  - `forward()`/`backward()`: In-place FFT operations
+  - `get_local_size()`, `get_local_shape()`, `get_global_start()`: Query functions
+
+**Supports**: 3D, 4D, 5D, 6D, and higher dimensions.
+
+#### `mpifft_r2c.hpp` (Recommended for Real Data)
+R2C/C2R transforms for real-valued input data:
+- **`PencilFFT_R2C<D>`**: Template class for real-to-complex FFT
+  - `forward(real_input, complex_output)`: R2C transform
+  - `backward(complex_input, real_output)`: C2R transform
+  - `get_local_real_size()`, `get_local_real_shape()`: Real-space queries
+  - `get_local_complex_size()`, `get_local_complex_shape()`: Complex-space queries
+
+**Memory advantage**: Stores only N/2+1 complex values on the last axis instead of N.
+
+#### `fft_backend_fftw.hpp`
+FFTW3 backend abstraction:
+- Manages FFTW plans for C2C, R2C, and C2R transforms
+- Handles batched 1D FFTs with arbitrary strides
+- Automatic plan cleanup via RAII
+
+#### `mpifft_pencil.hpp` (Legacy)
+Specialized implementations for 3D and 4D C2C transforms:
+- Explicit template specializations: `PencilFFT<3>` and `PencilFFT<4>`
+- Same API as generic version
+- **Note**: Generic version is now recommended for all use cases
+
+### Examples
+- `example_3d_pencil.cpp` - 3D C2C usage example
+- `example_4d_pencil.cpp` - 4D C2C usage example
+
+### Benchmarks
+See `benchmark/` directory:
+- **benchmark_mpi.cpp**: Specialized 3D implementation benchmark
+- **benchmark_generic.cpp**: Generic implementation benchmark
+- **compare_implementations.sh**: Automated comparison script
+- **PERFORMANCE_RESULTS.md**: Detailed performance analysis
+
+## Performance Considerations
+
+From the paper's benchmarks on Cray XC40:
+
+- **Competitive with P3DFFT, 2DECOMP&FFT**: Often 5-10% faster
+- **Better for distributed (inter-node) communication**: Excels when avoiding shared memory
+- **Scales well**: Good weak and strong scaling up to thousands of cores
+
+### Trade-offs
+
+**Advantages:**
+- Eliminates costly local transpose operations
+- Simpler, more maintainable code
+- Dimension-agnostic implementation
+- Exact match with serial FFTW
+- R2C transforms save ~50% memory for real data
+
+**Considerations:**
+- `MPI_Alltoallw` may be slower than `MPI_Alltoall` for contiguous data
+- Relies on MPI implementation quality for subarray datatype handling
+
+## References
+
+Dalcin, L., Mortensen, M., & Keyes, D. E. (2019). Fast parallel multidimensional FFT using advanced MPI. *Journal of Parallel and Distributed Computing*, 128, 137-150.
+
+## License
+
+This implementation is provided as-is for educational and research purposes.
