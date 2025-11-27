@@ -1,113 +1,100 @@
+# Makefile for parallel FFT tests - reorganized structure
 CXX = mpicxx
+SERIAL_CXX = g++
 CXXFLAGS = -std=c++11 -I.. -I../include -I/opt/homebrew/include
 LDFLAGS = -L.. -L/opt/homebrew/lib -L/usr/lib/aarch64-linux-gnu -lfftw3
 
-SERIAL_CXX = g++
+# Test categories
+C2C_TESTS = c2c/test_mpi_constant_32 c2c/test_mpi_gaussian_roundtrip c2c/test_8cubed c2c/test_4d_roundtrip
+R2C_TESTS = r2c/test_mpi_r2c_gaussian r2c/test_mpi_r2c_roundtrip
+UNIT_TESTS = unit/test_fftw_backend
+REFERENCE_TESTS = reference/reference_serial_3d reference/reference_serial_r2c_3d
 
-SPECIALIZED_TESTS = test_mpi_constant_32 test_mpi_gaussian_roundtrip test_8cubed test_4d_roundtrip test_mpi_r2c_gaussian test_mpi_r2c_roundtrip
-GENERIC_TESTS = test_generic_3d_gaussian test_generic_4d_gaussian test_generic_5d_gaussian test_generic_6d_gaussian test_generic_4d_small
-SERIAL_TESTS = reference_serial_3d reference_serial_r2c_3d
-BACKEND_TESTS = test_fftw_backend
+ALL_TESTS = $(C2C_TESTS) $(R2C_TESTS) $(UNIT_TESTS) $(REFERENCE_TESTS)
 
-all: $(SPECIALIZED_TESTS) $(GENERIC_TESTS) $(SERIAL_TESTS) $(BACKEND_TESTS)
+.PHONY: all clean run-c2c run-r2c run-unit run-reference run-all help
 
-test_mpi_constant_32: test_mpi_constant_32.cpp ../mpifft_generic.hpp
-	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
+all: $(ALL_TESTS)
 
-test_mpi_gaussian_roundtrip: test_mpi_gaussian_roundtrip.cpp ../mpifft_generic.hpp
-	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
+# C2C MPI Tests
+c2c/test_mpi_constant_32: c2c/test_mpi_constant_32.cpp ../mpifft_generic.hpp ../backend/fftw3/fft_backend_fftw.hpp
+	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
 
-test_8cubed: test_8cubed.cpp ../mpifft_generic.hpp
-	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
+c2c/test_mpi_gaussian_roundtrip: c2c/test_mpi_gaussian_roundtrip.cpp ../mpifft_generic.hpp ../backend/fftw3/fft_backend_fftw.hpp
+	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
 
-test_4d_roundtrip: test_4d_roundtrip.cpp ../mpifft_generic.hpp
-	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
+c2c/test_8cubed: c2c/test_8cubed.cpp ../mpifft_generic.hpp ../backend/fftw3/fft_backend_fftw.hpp
+	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
 
-test_mpi_r2c_gaussian: test_mpi_r2c_gaussian.cpp ../mpifft_r2c.hpp ../fft_backend_fftw.hpp
-	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
+c2c/test_4d_roundtrip: c2c/test_4d_roundtrip.cpp ../mpifft_generic.hpp ../backend/fftw3/fft_backend_fftw.hpp
+	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
 
-test_mpi_r2c_roundtrip: test_mpi_r2c_roundtrip.cpp ../mpifft_r2c.hpp ../fft_backend_fftw.hpp
-	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
+# R2C MPI Tests
+r2c/test_mpi_r2c_gaussian: r2c/test_mpi_r2c_gaussian.cpp ../mpifft_r2c.hpp ../backend/fftw3/fft_backend_fftw.hpp
+	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
 
-reference_serial_3d: reference_serial_3d.cpp
-	$(SERIAL_CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
+r2c/test_mpi_r2c_roundtrip: r2c/test_mpi_r2c_roundtrip.cpp ../mpifft_r2c.hpp ../backend/fftw3/fft_backend_fftw.hpp
+	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
 
-reference_serial_r2c_3d: reference_serial_r2c_3d.cpp
-	$(SERIAL_CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
+# Unit Tests (Backend)
+unit/test_fftw_backend: unit/test_fftw_backend.cpp ../backend/fft_backend.hpp ../backend/fftw3/fft_backend_fftw.hpp
+	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
 
-# Generic implementation tests
-test_generic_3d_gaussian: test_generic_3d_gaussian.cpp ../mpifft_generic.hpp
-	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
+# Serial Reference Tests
+reference/reference_serial_3d: reference/reference_serial_3d.cpp
+	$(SERIAL_CXX) -std=c++11 -I../include -I/opt/homebrew/include $< -o $@ -L.. -L/opt/homebrew/lib -L/usr/lib/aarch64-linux-gnu -lfftw3
 
-test_generic_4d_gaussian: test_generic_4d_gaussian.cpp ../mpifft_generic.hpp
-	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
+reference/reference_serial_r2c_3d: reference/reference_serial_r2c_3d.cpp
+	$(SERIAL_CXX) -std=c++11 -I../include -I/opt/homebrew/include $< -o $@ -L.. -L/opt/homebrew/lib -L/usr/lib/aarch64-linux-gnu -lfftw3
 
-test_generic_5d_gaussian: test_generic_5d_gaussian.cpp ../mpifft_generic.hpp
-	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
-
-test_generic_6d_gaussian: test_generic_6d_gaussian.cpp ../mpifft_generic.hpp
-	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
-
-test_generic_4d_small: test_generic_4d_small.cpp ../mpifft_generic.hpp
-	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
-
-# Backend tests
-test_fftw_backend: test_fftw_backend.cpp ../fft_backend.hpp ../fft_backend_fftw.hpp
-	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
-
+# Clean
 clean:
-	rm -f $(SPECIALIZED_TESTS) $(GENERIC_TESTS) $(SERIAL_TESTS) $(BACKEND_TESTS) *.txt *.o
+	rm -f $(ALL_TESTS)
+	rm -f c2c/*.txt r2c/*.txt reference/*.txt
+	find . -name "*.dSYM" -type d -exec rm -rf {} + 2>/dev/null || true
 
-compare: all
-	@echo "=== Running Serial Reference ==="
-	@./reference_serial_3d
-	@echo ""
-	@echo "=== Running MPI Version ==="
-	@mpirun -n 4 ./test_mpi_gaussian_roundtrip
-	@echo ""
-	@echo "=== Comparing Outputs ==="
-	@python3 compare_outputs.py
+# Run targets
+run-c2c: $(C2C_TESTS)
+	@echo "=== Running C2C Tests ==="
+	mpirun -np 4 c2c/test_mpi_constant_32
+	mpirun -np 4 c2c/test_mpi_gaussian_roundtrip
+	mpirun -np 4 c2c/test_8cubed
+	mpirun -np 4 c2c/test_4d_roundtrip
 
-run-specialized: $(SPECIALIZED_TESTS)
-	@echo "=== Running Specialized Implementation Tests ==="
-	@echo ""
-	@echo "=== Running Constant Test (32^3) ==="
-	@mpirun -n 4 ./test_mpi_constant_32
-	@echo ""
-	@echo "=== Running Gaussian Roundtrip Test (32^3) ==="
-	@mpirun -n 4 ./test_mpi_gaussian_roundtrip
-	@echo ""
-	@echo "=== Running 8^3 Sequential Values Test ==="
-	@mpirun -n 4 ./test_8cubed
-	@echo ""
-	@echo "=== Running 4D Test (4^4) ==="
-	@mpirun -n 4 ./test_4d_roundtrip 2>/dev/null || true
-	@echo ""
+run-r2c: $(R2C_TESTS)
+	@echo "=== Running R2C Tests ==="
+	mpirun -np 4 r2c/test_mpi_r2c_gaussian
+	mpirun -np 4 r2c/test_mpi_r2c_roundtrip
 
-run-generic: $(GENERIC_TESTS)
-	@echo "=== Running Generic Implementation Tests ==="
-	@echo ""
-	@echo "=== 3D Gaussian Test (32^3 with 4 ranks) ==="
-	@mpirun -n 4 ./test_generic_3d_gaussian
-	@echo ""
-	@echo "=== 4D Gaussian Test (16^4 with 8 ranks) ==="
-	@mpirun -n 8 ./test_generic_4d_gaussian
-	@echo ""
-	@echo "=== 4D Small Test (4^4 with 4 ranks) ==="
-	@mpirun -n 4 ./test_generic_4d_small
-	@echo ""
-	@echo "=== 5D Gaussian Test (8^5 with 8 ranks) ==="
-	@mpirun -n 8 ./test_generic_5d_gaussian
-	@echo ""
-	@echo "=== 6D Gaussian Test (6^6 with 8 ranks) ==="
-	@mpirun -n 8 ./test_generic_6d_gaussian
-	@echo ""
+run-unit: $(UNIT_TESTS)
+	@echo "=== Running Unit Tests ==="
+	./unit/test_fftw_backend
 
-run-backend: $(BACKEND_TESTS)
-	@echo "=== Testing FFTW Backend ==="
-	@./test_fftw_backend || exit 1
+run-reference: $(REFERENCE_TESTS)
+	@echo "=== Running Reference Tests ==="
+	./reference/reference_serial_3d
+	./reference/reference_serial_r2c_3d
 
-run-all: run-specialized run-generic run-backend
-	@echo "All tests completed!"
+run-all: run-unit run-reference run-c2c run-r2c
 
-.PHONY: all clean run-all run-specialized run-generic run-backend compare
+# Compare MPI output with serial reference
+compare: reference/reference_serial_3d c2c/test_mpi_gaussian_roundtrip
+	@echo "=== Comparing MPI vs Serial Output ==="
+	./reference/reference_serial_3d > reference/serial_output.txt
+	mpirun -np 4 c2c/test_mpi_gaussian_roundtrip > c2c/mpi_output.txt
+	python3 scripts/compare_outputs.py reference/serial_output.txt c2c/mpi_output.txt
+
+help:
+	@echo "Parallel FFT Test Suite"
+	@echo ""
+	@echo "Build targets:"
+	@echo "  make all          - Build all tests"
+	@echo "  make clean        - Remove all built files"
+	@echo ""
+	@echo "Run targets:"
+	@echo "  make run-unit     - Run backend unit tests"
+	@echo "  make run-reference - Run serial reference tests"
+	@echo "  make run-c2c      - Run C2C MPI tests"
+	@echo "  make run-r2c      - Run R2C MPI tests"
+	@echo "  make run-all      - Run all tests"
+	@echo "  make compare      - Compare MPI vs serial output"

@@ -1,4 +1,4 @@
-#include "../mpifft_generic.hpp"
+#include "../../mpifft_generic.hpp"
 #include <iostream>
 #include <cmath>
 
@@ -7,40 +7,47 @@ int main(int argc, char** argv) {
     int rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-    int global_shape[4] = {4, 4, 4, 4};
-    mpifft::PencilFFT<4> fft(global_shape);
+    int global_shape[3] = {32, 32, 32};
+    mpifft::PencilFFT<3> fft(global_shape);
 
     int local_size = fft.get_local_size();
     std::vector<std::complex<double>> data(local_size, {1.0, 0.0});
 
     if (rank == 0) {
-        std::cout << "Testing 4D roundtrip with constant (1,0) input\n";
-        std::cout << "Global shape: 4x4x4x4 = 256 elements\n";
+        std::cout << "Testing 32x32x32 constant array\n";
+        std::cout << "Initial data[0] = " << data[0] << "\n";
     }
 
     fft.forward(data.data());
-    
+
     if (rank == 0) {
-        std::cout << "After forward: data[0]=" << data[0] << " (expected 256)\n";
+        std::cout << "After forward: data[0] = " << data[0] << "\n";
+        std::cout << "Expected: (32768, 0)\n";
     }
 
     fft.backward(data.data());
 
+    if (rank == 0) {
+        std::cout << "After backward (before norm): data[0] = " << data[0] << "\n";
+        std::cout << "Expected: (32768, 0)\n";
+    }
+
     // Normalize
-    double scale = 1.0 / (global_shape[0] * global_shape[1] * global_shape[2] * global_shape[3]);
+    double scale = 1.0 / (global_shape[0] * global_shape[1] * global_shape[2]);
     for (int i = 0; i < local_size; ++i) {
         data[i] *= scale;
     }
 
     if (rank == 0) {
-        std::cout << "After roundtrip (normalized): data[0]=" << data[0] << " (expected 1)\n";
-        
+        std::cout << "After normalization: data[0] = " << data[0] << "\n";
+        std::cout << "Expected: (1, 0)\n";
+
         bool all_correct = true;
         for (int i = 0; i < local_size; ++i) {
             if (std::abs(data[i].real() - 1.0) > 1e-10 || std::abs(data[i].imag()) > 1e-10) {
                 all_correct = false;
                 std::cout << "ERROR at index " << i << ": " << data[i] << "\n";
-                if (i > 5) break;  // Don't spam
+                if (i > 5) break;
             }
         }
         if (all_correct) {

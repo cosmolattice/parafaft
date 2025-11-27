@@ -43,7 +43,7 @@ make run-all
 ## Basic Usage
 
 ```cpp
-#include "mpifft_pencil.hpp"
+#include "mpifft_generic.hpp"
 
 int main(int argc, char** argv) {
     MPI_Init(&argc, &argv);
@@ -82,6 +82,8 @@ int main(int argc, char** argv) {
 | 3D Backward FFT | ✅ Fully working |
 | 4D Forward FFT | ✅ Fully working |
 | 4D Backward FFT | ✅ Fully working |
+| R2C Forward FFT | ✅ Fully working |
+| C2R Backward FFT | ✅ Fully working |
 | Serial vs MPI | ✅ Exact match |
 | Constant data | ✅ Tested |
 | Gaussian data | ✅ Tested |
@@ -140,7 +142,9 @@ MPI_Finalize(); // Now safe
 
 | File | Description |
 |------|-------------|
-| `mpifft_pencil.hpp` | Main template library (3D and 4D) |
+| `mpifft_generic.hpp` | Dimension-agnostic C2C transforms |
+| `mpifft_r2c.hpp` | R2C/C2R transforms for real data |
+| `fft_backend_fftw.hpp` | FFTW backend implementation |
 | `example_3d_pencil.cpp` | 3D usage example |
 | `example_4d_pencil.cpp` | 4D usage example |
 | `test/` | Comprehensive test suite |
@@ -161,6 +165,23 @@ MPI_Finalize(); // Now safe
 4. **Remember to normalize** after backward transform
 5. **Check test/** for working examples
 
+### R2C Transform Example
+
+For real-valued input data, use the R2C transform for better memory efficiency:
+
+```cpp
+#include "mpifft_r2c.hpp"
+
+int global_shape[3] = {32, 32, 32};
+mpifft::PencilFFT_R2C<3> fft(global_shape);
+
+std::vector<double> real_input(fft.get_local_real_size());
+std::vector<std::complex<double>> complex_output(fft.get_local_complex_size());
+
+fft.forward(real_input.data(), complex_output.data());
+fft.backward(complex_output.data(), real_input.data());
+```
+
 ---
 
-**Bottom Line**: The library is fully functional for both 3D and 4D FFTs. Use `mpifft_pencil.hpp` for the clean API.
+**Bottom Line**: Use `mpifft_generic.hpp` for C2C transforms or `mpifft_r2c.hpp` for real-valued data.

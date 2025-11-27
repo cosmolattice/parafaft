@@ -20,7 +20,7 @@
 // ============================================================================
 
 #include <mpi.h>
-#include "fft_backend_fftw.hpp"
+#include "backend/fftw3/fft_backend_fftw.hpp"
 #include <vector>
 #include <complex>
 #include <stdexcept>

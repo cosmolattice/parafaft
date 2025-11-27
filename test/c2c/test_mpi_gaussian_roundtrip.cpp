@@ -1,4 +1,4 @@
-#include "../mpifft_generic.hpp"
+#include "../../mpifft_generic.hpp"
 #include <iostream>
 #include <iomanip>
 #include <fstream>

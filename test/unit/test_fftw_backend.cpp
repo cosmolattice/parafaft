@@ -3,7 +3,7 @@
 #include <complex>
 #include <cmath>
 #include <algorithm>
-#include "../fft_backend_fftw.hpp"
+#include "../../backend/fftw3/fft_backend_fftw.hpp"
 
 // Test 1: Contiguous data layout (stride=1, dist=N)
 void test_contiguous_layout() {

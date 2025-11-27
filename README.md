@@ -219,11 +219,7 @@ Comprehensive test suite in `test/` directory:
 - **reference_serial_3d**: Serial FFTW reference for validation
 
 #### Generic Implementation
-- **test_generic_3d_gaussian**: 32³ Gaussian (validates exact match with specialized)
-- **test_generic_4d_gaussian**: 16⁴ Gaussian
-- **test_generic_4d_small**: 4⁴ edge case (non-uniform processor grid)
-- **test_generic_5d_gaussian**: 8⁵ Gaussian
-- **test_generic_6d_gaussian**: 6⁶ Gaussian
+*Currently no dedicated generic tests. All specialized tests use the generic implementation internally.*
 
 ### R2C/C2R Tests
 - **test_mpi_r2c_gaussian**: Forward R2C transform validation

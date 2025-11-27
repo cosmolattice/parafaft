@@ -1,4 +1,4 @@
-#include "../mpifft_r2c.hpp"
+#include "../../mpifft_r2c.hpp"
 #include <fftw3.h>
 #include <iostream>
 #include <iomanip>

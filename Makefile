@@ -1,34 +1,29 @@
 # Makefile for MPI FFT Library
 #
 # Status:
-#  - minimal_3d_fft: ✓ Fully working (forward + backward)
-#  - example_3d_pencil: ⚠️ Forward only (backward has bugs)
-#  - example_4d_pencil: ⚠️ Forward only (backward has bugs)
+#  - example_3d_pencil: 3D FFT example using template library
+#  - example_4d_pencil: 4D FFT example using template library
 
 CXX = mpicxx
-CXXFLAGS = -std=c++11 -O3 -Wall -Wextra -I/opt/homebrew/include
-LDFLAGS = -L/opt/homebrew/lib -lfftw3 -lm
+CXXFLAGS = -std=c++11 -O3 -Wall -Wextra -I. -I./include -I/opt/homebrew/include
+LDFLAGS = -L. -L/opt/homebrew/lib -L/usr/lib/aarch64-linux-gnu -lfftw3 -lm
 
-TARGETS = minimal_3d_fft example_3d_pencil example_4d_pencil
+TARGETS = example_3d_pencil example_4d_pencil
 
 .PHONY: all clean test
 
 all: $(TARGETS)
 
-# Working standalone implementation
-minimal_3d_fft: minimal_3d_fft.cpp
+# Template library examples
+example_3d_pencil: example_3d_pencil.cpp mpifft_generic.hpp backend/fftw3/fft_backend_fftw.hpp
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
 
-# Template library examples (forward only)
-example_3d_pencil: example_3d_pencil.cpp mpifft_pencil.hpp
+example_4d_pencil: example_4d_pencil.cpp mpifft_generic.hpp backend/fftw3/fft_backend_fftw.hpp
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
 
-example_4d_pencil: example_4d_pencil.cpp mpifft_pencil.hpp
-	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
-
-# Run working standalone version
-test: minimal_3d_fft
-	mpirun -np 4 ./minimal_3d_fft
+# Run 3D example
+test: example_3d_pencil
+	mpirun -np 4 ./example_3d_pencil
 
 clean:
 	rm -f $(TARGETS)
@@ -40,13 +35,11 @@ help:
 	@echo ""
 	@echo "Targets:"
 	@echo "  all                  - Build all examples"
-	@echo "  minimal_3d_fft       - ✓ Working standalone 3D FFT"
-	@echo "  example_3d_pencil    - ⚠️ Template library (forward only)"
-	@echo "  example_4d_pencil    - ⚠️ Template library (forward only)"
-	@echo "  test                 - Run working standalone version"
+	@echo "  example_3d_pencil    - 3D FFT example"
+	@echo "  example_4d_pencil    - 4D FFT example"
+	@echo "  test                 - Run 3D example"
 	@echo "  clean                - Remove built files"
 	@echo ""
 	@echo "Usage:"
-	@echo "  mpirun -np 4 ./minimal_3d_fft       # Working version"
-	@echo "  mpirun -np 4 ./example_3d_pencil    # Forward only"
-	@echo "  mpirun -np 8 ./example_4d_pencil    # Forward only"
+	@echo "  mpirun -np 4 ./example_3d_pencil"
+	@echo "  mpirun -np 8 ./example_4d_pencil"

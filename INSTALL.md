@@ -68,7 +68,11 @@ This builds:
 - `test_mpi_gaussian_roundtrip` - 32³ Gaussian distribution test
 - `test_8cubed` - 8³ sequential values test
 - `test_4d_roundtrip` - 4⁴ test
+- `test_mpi_r2c_gaussian` - R2C forward transform test
+- `test_mpi_r2c_roundtrip` - R2C/C2R roundtrip validation
+- `test_fftw_backend` - Backend unit tests
 - `reference_serial_3d` - Serial FFTW reference
+- `reference_serial_r2c_3d` - Serial R2C reference
 
 ## Running Tests
 
@@ -192,9 +196,9 @@ mpirun -n 2 ./example_3d_pencil   # May fail
 ## Implementation Status
 
 ### ✅ Fully Working
-- **Template library** (`mpifft_pencil.hpp`): Both forward and backward transforms
-- **3D FFT**: All tests pass
-- **4D FFT**: All tests pass
+- **C2C transforms** (`mpifft_generic.hpp`): Forward and backward transforms
+- **R2C/C2R transforms** (`mpifft_r2c.hpp`): Real-to-complex and inverse
+- **3D/4D FFT**: All tests pass
 - **Serial validation**: MPI matches serial FFTW exactly
 
 ### Algorithm Implementation

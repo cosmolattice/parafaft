@@ -4,7 +4,7 @@
 #include <fftw3.h>
 #include <complex>
 #include <vector>
-#include "fft_backend.hpp"
+#include "../fft_backend.hpp"
 
 namespace mpifft {
 
