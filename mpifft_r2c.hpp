@@ -104,7 +104,7 @@ inline void r2c_exchange(MPI_Comm comm, MPI_Datatype datatype, int ndims,
     }
 }
 
-template<int D>
+template<int D, typename Backend = FFTWBackend>
 class PencilFFT_R2C {
 public:
     using Complex = std::complex<double>;
@@ -578,7 +578,7 @@ private:
     std::vector<Complex> scratch_b_;  // Ping-pong buffer B
 
     // FFT backend
-    FFTWBackend backend_;
+    Backend backend_;
 };
 
 } // namespace mpifft
