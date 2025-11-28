@@ -22,12 +22,12 @@ void test_contiguous_layout() {
     std::vector<std::complex<double>> original = data;
 
     // Create backend and plan
-    mpifft::FFTWBackend backend(1);
+    parafaft::FFTWBackend backend(1);
     backend.create_stage_plan(0, N, batch, data.data(), 1, N);
 
     // Roundtrip
-    backend.execute_stage(0, mpifft::FFTDirection::Forward, data.data());
-    backend.execute_stage(0, mpifft::FFTDirection::Backward, data.data());
+    backend.execute_stage(0, parafaft::FFTDirection::Forward, data.data());
+    backend.execute_stage(0, parafaft::FFTDirection::Backward, data.data());
 
     // Normalize
     for (auto& val : data) {
@@ -65,12 +65,12 @@ void test_strided_layout() {
     std::vector<std::complex<double>> original = data;
 
     // Create backend and plan
-    mpifft::FFTWBackend backend(1);
+    parafaft::FFTWBackend backend(1);
     backend.create_stage_plan(0, N, batch, data.data(), batch, 1);
 
     // Roundtrip
-    backend.execute_stage(0, mpifft::FFTDirection::Forward, data.data());
-    backend.execute_stage(0, mpifft::FFTDirection::Backward, data.data());
+    backend.execute_stage(0, parafaft::FFTDirection::Forward, data.data());
+    backend.execute_stage(0, parafaft::FFTDirection::Backward, data.data());
 
     // Normalize
     for (auto& val : data) {
@@ -108,7 +108,7 @@ void test_multiple_stages() {
     }
 
     // Create backend with 3 stages
-    mpifft::FFTWBackend backend(num_stages);
+    parafaft::FFTWBackend backend(num_stages);
     for (int stage = 0; stage < num_stages; ++stage) {
         backend.create_stage_plan(stage, N, 1, stage_data[stage].data(), 1, N);
     }
@@ -117,8 +117,8 @@ void test_multiple_stages() {
     double max_error = 0.0;
     for (int repeat = 0; repeat < 3; ++repeat) {
         for (int stage = 0; stage < num_stages; ++stage) {
-            backend.execute_stage(stage, mpifft::FFTDirection::Forward, stage_data[stage].data());
-            backend.execute_stage(stage, mpifft::FFTDirection::Backward, stage_data[stage].data());
+            backend.execute_stage(stage, parafaft::FFTDirection::Forward, stage_data[stage].data());
+            backend.execute_stage(stage, parafaft::FFTDirection::Backward, stage_data[stage].data());
             for (auto& val : stage_data[stage]) {
                 val /= N;
             }
@@ -159,20 +159,20 @@ void test_different_pointers() {
     auto original3 = data3;
 
     // Create single backend and plan (using data1 for plan creation)
-    mpifft::FFTWBackend backend(1);
+    parafaft::FFTWBackend backend(1);
     backend.create_stage_plan(0, N, batch, data1.data(), 1, N);
 
     // Apply the same plan to all three different arrays
-    backend.execute_stage(0, mpifft::FFTDirection::Forward, data1.data());
-    backend.execute_stage(0, mpifft::FFTDirection::Backward, data1.data());
+    backend.execute_stage(0, parafaft::FFTDirection::Forward, data1.data());
+    backend.execute_stage(0, parafaft::FFTDirection::Backward, data1.data());
     for (auto& val : data1) val /= N;
 
-    backend.execute_stage(0, mpifft::FFTDirection::Forward, data2.data());
-    backend.execute_stage(0, mpifft::FFTDirection::Backward, data2.data());
+    backend.execute_stage(0, parafaft::FFTDirection::Forward, data2.data());
+    backend.execute_stage(0, parafaft::FFTDirection::Backward, data2.data());
     for (auto& val : data2) val /= N;
 
-    backend.execute_stage(0, mpifft::FFTDirection::Forward, data3.data());
-    backend.execute_stage(0, mpifft::FFTDirection::Backward, data3.data());
+    backend.execute_stage(0, parafaft::FFTDirection::Forward, data3.data());
+    backend.execute_stage(0, parafaft::FFTDirection::Backward, data3.data());
     for (auto& val : data3) val /= N;
 
     // Check all arrays recovered correctly

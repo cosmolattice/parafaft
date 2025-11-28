@@ -9,7 +9,7 @@ Both forward and backward transforms are **fully functional and validated** for 
 
 ## What Was Accomplished
 
-### ✅ Template Library (`mpifft_generic.hpp`)
+### ✅ Template Library (`parafaft_generic.hpp`)
 - Clean template-based API for 3D and 4D FFTs
 - **Forward transform**: Fully working
 - **Backward transform**: Fully working (bug fixed!)
@@ -19,7 +19,7 @@ Both forward and backward transforms are **fully functional and validated** for 
 
 ### ✅ Real-to-Complex (R2C) and Complex-to-Real (C2R) Transforms
 
-The implementation includes optimized R2C/C2R transforms in `mpifft_r2c.hpp`:
+The implementation includes optimized R2C/C2R transforms in `parafaft_r2c.hpp`:
 
 - **Memory efficient**: Exploits Hermitian symmetry to reduce storage by ~50%
 - **Full roundtrip support**: R2C forward → C2R backward preserves input data
@@ -52,18 +52,21 @@ for (int i0 = 0; i0 < n0; ++i0) {
 ## Current State
 
 **For Production Use:**
-✅ **C2C transforms** → Use `mpifft_generic.hpp`
-✅ **R2C/C2R transforms** → Use `mpifft_r2c.hpp`
+✅ **C2C transforms** → Use `parafaft_generic.hpp`
+✅ **R2C/C2R transforms** → Use `parafaft_r2c.hpp`
 
 ## File Structure
 
 ```
-├── mpifft_generic.hpp          # Main C2C template library (RECOMMENDED)
-├── mpifft_r2c.hpp              # R2C/C2R transforms for real data
+├── parafaft_generic.hpp          # Main C2C template library (RECOMMENDED)
+├── parafaft_r2c.hpp              # R2C/C2R transforms for real data
 ├── fft_backend.hpp             # Backend abstraction interface
 ├── fft_backend_fftw.hpp        # FFTW backend implementation
-├── example_3d_pencil.cpp       # 3D usage example
-├── example_4d_pencil.cpp       # 4D usage example
+│
+├── examples/                   # Usage examples
+│   ├── Makefile                # Build configuration
+│   ├── example_3d_pencil.cpp   # 3D usage example
+│   └── example_4d_pencil.cpp   # 4D usage example
 │
 ├── test/                       # Comprehensive test suite
 │   ├── Makefile                # Build system with 'compare' target
@@ -141,8 +144,8 @@ make run-all
 make compare
 
 # Use in your code
-#include "mpifft_generic.hpp"  // For C2C transforms
-mpifft::PencilFFT<3> fft(shape);
+#include "parafaft_generic.hpp"  // For C2C transforms
+parafaft::ParaFaFT<3> fft(shape);
 fft.forward(data.data());
 fft.backward(data.data());
 // Don't forget to normalize!
@@ -151,13 +154,13 @@ fft.backward(data.data());
 ## Usage Example
 
 ```cpp
-#include "mpifft_generic.hpp"
+#include "parafaft_generic.hpp"
 
 int main(int argc, char** argv) {
     MPI_Init(&argc, &argv);
 
     int shape[3] = {32, 32, 32};
-    mpifft::PencilFFT<3> fft(shape);
+    parafaft::ParaFaFT<3> fft(shape);
 
     int size = fft.get_local_size();
     std::vector<std::complex<double>> data(size);
@@ -194,7 +197,7 @@ Based on Dalcin et al. (2019) benchmarks:
 ## References
 
 - **Paper**: Dalcín, L., Mortensen, M., & Keyes, D. E. (2019). Fast parallel multidimensional FFT using advanced MPI. *Journal of Parallel and Distributed Computing*, 128, 137-150.
-- **Implementation**: `mpifft_generic.hpp` (C2C), `mpifft_r2c.hpp` (R2C/C2R)
+- **Implementation**: `parafaft_generic.hpp` (C2C), `parafaft_r2c.hpp` (R2C/C2R)
 - **Tests**: `test/` directory
 
 ---

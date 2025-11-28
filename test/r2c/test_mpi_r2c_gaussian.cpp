@@ -1,4 +1,4 @@
-#include "../../mpifft_r2c.hpp"
+#include "../../parafaft_r2c.hpp"
 #include <fftw3.h>
 #include <iostream>
 #include <iomanip>
@@ -68,7 +68,7 @@ int main(int argc, char** argv) {
     const double sigma = 4.0;
 
     // Create R2C FFT object
-    mpifft::PencilFFT_R2C<3> fft(global_shape);
+    parafaft::ParaFaFT_R2C<3> fft(global_shape);
 
     // Get local dimensions
     int local_real_shape[3], real_start[3];

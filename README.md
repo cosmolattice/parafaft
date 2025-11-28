@@ -25,13 +25,13 @@ A C++ implementation of multidimensional parallel FFT using MPI, based on the al
 
 - **Dimension-agnostic**: Generic template supports arbitrary dimensions (3D, 4D, 5D, 6D, ...)
 - **Three implementations**:
-  - `mpifft_generic.hpp`: Dimension-agnostic C2C template (recommended for complex data)
-  - `mpifft_r2c.hpp`: R2C/C2R transforms for real-valued data (memory efficient)
-  - `mpifft_pencil.hpp`: Specialized 3D and 4D C2C versions (legacy)
+  - `parafaft_generic.hpp`: Dimension-agnostic C2C template (recommended for complex data)
+  - `parafaft_r2c.hpp`: R2C/C2R transforms for real-valued data (memory efficient)
+  - `parafaft_pencil.hpp`: Specialized 3D and 4D C2C versions (legacy)
 - **MPI parallelization**: Distributes up to (D-1) dimensions across processor grids
 - **No local transposes**: Uses MPI subarray datatypes with `MPI_Alltoallw` to eliminate local data rearrangements
 - **FFTW3 backend**: Uses FFTW3 for efficient 1D FFT operations
-- **User-friendly API**: Simple `PencilFFT<D>` and `PencilFFT_R2C<D>` template interfaces
+- **User-friendly API**: Simple `ParaFaFT<D>` and `ParaFaFT_R2C<D>` template interfaces
 
 ## Quick Start
 
@@ -102,10 +102,10 @@ For R2C transforms, the last axis is reduced from N to N/2+1 in complex space du
 
 ```bash
 # Build examples
-mpicxx example_3d_pencil.cpp -o example_3d_pencil -std=c++11 -I/opt/homebrew/include -L/opt/homebrew/lib -lfftw3
-mpicxx example_4d_pencil.cpp -o example_4d_pencil -std=c++11 -I/opt/homebrew/include -L/opt/homebrew/lib -lfftw3
+cd examples
+make all
 
-# Or use the test Makefile
+# Or build tests
 cd test
 make all
 ```
@@ -114,10 +114,10 @@ make all
 
 ```bash
 # 3D example (4 MPI ranks)
-mpirun -n 4 ./example_3d_pencil
+mpirun -n 4 ./examples/example_3d_pencil
 
 # 4D example (8 MPI ranks)
-mpirun -n 8 ./example_4d_pencil
+mpirun -n 8 ./examples/example_4d_pencil
 
 # Run comprehensive tests
 cd test
@@ -129,14 +129,14 @@ make run-all
 ### Complex-to-Complex (C2C) Transform
 
 ```cpp
-#include "mpifft_generic.hpp"
+#include "parafaft_generic.hpp"
 
 int main(int argc, char** argv) {
     MPI_Init(&argc, &argv);
 
     // Works for any dimension!
     int global_shape[3] = {32, 32, 32};
-    mpifft::PencilFFT<3> fft(global_shape);
+    parafaft::ParaFaFT<3> fft(global_shape);
 
     // Allocate local data
     int local_size = fft.get_local_size();
@@ -165,13 +165,13 @@ int main(int argc, char** argv) {
 ### Real-to-Complex (R2C) / Complex-to-Real (C2R) Transform
 
 ```cpp
-#include "mpifft_r2c.hpp"
+#include "parafaft_r2c.hpp"
 
 int main(int argc, char** argv) {
     MPI_Init(&argc, &argv);
 
     int global_shape[3] = {32, 32, 32};
-    mpifft::PencilFFT_R2C<3> fft(global_shape);
+    parafaft::ParaFaFT_R2C<3> fft(global_shape);
 
     // Get local sizes
     int local_real_size = fft.get_local_real_size();
@@ -244,21 +244,21 @@ See `test/README.md` for detailed test documentation.
 
 ### Main Headers
 
-#### `mpifft_generic.hpp` (Recommended for C2C)
+#### `parafaft_generic.hpp` (Recommended for C2C)
 Dimension-agnostic template library for complex-to-complex transforms:
 - **`decompose()`**: Balanced block-contiguous decomposition
 - **`subarray()`**: MPI subarray datatype creation
 - **`exchange()`**: Global redistribution via `MPI_Alltoallw`
-- **`PencilFFT<D>`**: Template class for arbitrary D-dimensional FFT
+- **`ParaFaFT<D>`**: Template class for arbitrary D-dimensional FFT
   - Constructor: Creates (D-1)D processor grid automatically
   - `forward()`/`backward()`: In-place FFT operations
   - `get_local_size()`, `get_local_shape()`, `get_global_start()`: Query functions
 
 **Supports**: 3D, 4D, 5D, 6D, and higher dimensions.
 
-#### `mpifft_r2c.hpp` (Recommended for Real Data)
+#### `parafaft_r2c.hpp` (Recommended for Real Data)
 R2C/C2R transforms for real-valued input data:
-- **`PencilFFT_R2C<D>`**: Template class for real-to-complex FFT
+- **`ParaFaFT_R2C<D>`**: Template class for real-to-complex FFT
   - `forward(real_input, complex_output)`: R2C transform
   - `backward(complex_input, real_output)`: C2R transform
   - `get_local_real_size()`, `get_local_real_shape()`: Real-space queries
@@ -272,15 +272,15 @@ FFTW3 backend abstraction:
 - Handles batched 1D FFTs with arbitrary strides
 - Automatic plan cleanup via RAII
 
-#### `mpifft_pencil.hpp` (Legacy)
+#### `parafaft_pencil.hpp` (Legacy)
 Specialized implementations for 3D and 4D C2C transforms:
-- Explicit template specializations: `PencilFFT<3>` and `PencilFFT<4>`
+- Explicit template specializations: `ParaFaFT<3>` and `ParaFaFT<4>`
 - Same API as generic version
 - **Note**: Generic version is now recommended for all use cases
 
 ### Examples
-- `example_3d_pencil.cpp` - 3D C2C usage example
-- `example_4d_pencil.cpp` - 4D C2C usage example
+- `examples/example_3d_pencil.cpp` - 3D C2C usage example
+- `examples/example_4d_pencil.cpp` - 4D C2C usage example
 
 ### Benchmarks
 See `benchmark/` directory:

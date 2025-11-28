@@ -19,7 +19,7 @@ make compare          # Run serial and MPI versions, then compare outputs
 
 ### Specialized Implementation Tests
 
-These tests use the generic implementation in `mpifft_generic.hpp`:
+These tests use the generic implementation in `parafaft_generic.hpp`:
 
 #### 1. `test_mpi_constant_32.cpp`
 - **Size**: 32×32×32
@@ -59,7 +59,7 @@ These tests use the generic implementation in `mpifft_generic.hpp`:
 ### Generic Implementation Tests
 
 *No generic implementation tests currently exist. The specialized tests above use the generic
-implementation (`mpifft_generic.hpp`) internally.*
+implementation (`parafaft_generic.hpp`) internally.*
 
 To add generic tests that validate higher-dimensional FFTs (5D, 6D), create test files
 following the pattern in `test_mpi_gaussian_roundtrip.cpp` and add them to `GENERIC_TESTS`
@@ -67,7 +67,7 @@ in the Makefile.
 
 ### R2C/C2R Tests
 
-These tests validate the Real-to-Complex transforms in `mpifft_r2c.hpp`:
+These tests validate the Real-to-Complex transforms in `parafaft_r2c.hpp`:
 
 #### 1. `test_mpi_r2c_gaussian.cpp`
 - **Purpose**: R2C forward transform validation
@@ -167,13 +167,13 @@ The generic implementation has **no performance penalty** compared to specialize
 - Tests verify that forward + backward FFT recovers original data
 - MPI output is properly reordered from distributed format to match global ordering
 
-### Generic C2C Implementation (`mpifft_generic.hpp`)
+### Generic C2C Implementation (`parafaft_generic.hpp`)
 - Template-based, works for arbitrary dimensions D
 - Automatically handles D-dimensional arrays with (D-1)-dimensional processor grids
 - Correctly handles edge cases like non-uniform processor grids (e.g., [2,2,1])
 - **Recommended for all C2C (complex-to-complex) transforms**
 
-### R2C/C2R Implementation (`mpifft_r2c.hpp`)
+### R2C/C2R Implementation (`parafaft_r2c.hpp`)
 - Real-to-Complex and Complex-to-Real transforms
 - Memory efficient: exploits Hermitian symmetry (stores N/2+1 instead of N)
 - **Recommended for real-valued input data**

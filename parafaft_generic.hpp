@@ -1,5 +1,5 @@
-#ifndef MPIFFT_GENERIC_HPP
-#define MPIFFT_GENERIC_HPP
+#ifndef PARAFAFT_GENERIC_HPP
+#define PARAFAFT_GENERIC_HPP
 
 // ============================================================================
 // Generic Dimension-Agnostic Parallel FFT Implementation
@@ -29,7 +29,7 @@
 #include <numeric>
 #include <iostream>
 
-namespace mpifft {
+namespace parafaft {
 
 // ============================================================================
 // Balanced Block-Contiguous Decomposition
@@ -209,7 +209,7 @@ inline void exchange(MPI_Comm comm, MPI_Datatype datatype, int ndims,
 //
 // ============================================================================
 template<int D, typename Backend = FFTWBackend>
-class PencilFFT {
+class ParaFaFT {
 public:
     using Complex = std::complex<double>;
 
@@ -231,7 +231,7 @@ public:
     //   MPI_Dims_create(8, 3, dims) might give dims = [2, 2, 2]
     //   Creates a 2×2×2 grid of processors
     //
-    PencilFFT(const int global_shape[D], MPI_Comm comm = MPI_COMM_WORLD)
+    ParaFaFT(const int global_shape[D], MPI_Comm comm = MPI_COMM_WORLD)
         : comm_world_(comm), backend_(D) {
 
         MPI_Comm_rank(comm_world_, &rank_);
@@ -345,7 +345,7 @@ public:
         }
     }
 
-    ~PencilFFT() {
+    ~ParaFaFT() {
         int finalized;
         MPI_Finalized(&finalized);
         if (!finalized) {
@@ -704,6 +704,6 @@ private:
     Backend backend_;
 };
 
-} // namespace mpifft
+} // namespace parafaft
 
-#endif // MPIFFT_GENERIC_HPP
+#endif // PARAFAFT_GENERIC_HPP

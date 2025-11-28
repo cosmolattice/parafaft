@@ -1,6 +1,6 @@
 # Compiled executables
-example_3d_pencil
-example_4d_pencil
+examples/example_3d_pencil
+examples/example_4d_pencil
 minimal_3d_fft
 test/test_mpi_constant_32
 test/test_mpi_gaussian_roundtrip

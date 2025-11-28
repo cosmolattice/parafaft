@@ -42,19 +42,11 @@ mpicxx --version
 ## Building Examples
 
 ```bash
-# 3D example
-mpicxx example_3d_pencil.cpp -o example_3d_pencil \
-  -std=c++11 -I/opt/homebrew/include -L/opt/homebrew/lib -lfftw3
-
-# 4D example
-mpicxx example_4d_pencil.cpp -o example_4d_pencil \
-  -std=c++11 -I/opt/homebrew/include -L/opt/homebrew/lib -lfftw3
+cd examples
+make all
 ```
 
-**Note**: Adjust include/library paths based on your installation:
-- macOS Homebrew: `/opt/homebrew/include` and `/opt/homebrew/lib`
-- Ubuntu/Debian: Usually `/usr/include` and `/usr/lib` (may not need explicit paths)
-- Custom install: Use your installation prefix
+This builds both `example_3d_pencil` and `example_4d_pencil`.
 
 ## Building Tests
 
@@ -132,10 +124,10 @@ mpirun -n 4 ./test_4d_roundtrip
 
 ```bash
 # 3D example (requires 4 MPI ranks for 2×2 processor grid)
-mpirun -n 4 ./example_3d_pencil
+mpirun -n 4 ./examples/example_3d_pencil
 
 # 4D example (requires 8 MPI ranks for 2×2×2 processor grid)
-mpirun -n 8 ./example_4d_pencil
+mpirun -n 8 ./examples/example_4d_pencil
 ```
 
 ## Common Issues
@@ -181,8 +173,8 @@ mpirun -n 4 ./program    # Correct
 - 3D examples need 4 ranks (2×2 grid)
 - 4D examples need 8 ranks (2×2×2 grid)
 ```bash
-mpirun -n 4 ./example_3d_pencil   # Correct
-mpirun -n 2 ./example_3d_pencil   # May fail
+mpirun -n 4 ./examples/example_3d_pencil   # Correct
+mpirun -n 2 ./examples/example_3d_pencil   # May fail
 ```
 
 ### Tests show errors > 1e-10
@@ -196,8 +188,8 @@ mpirun -n 2 ./example_3d_pencil   # May fail
 ## Implementation Status
 
 ### ✅ Fully Working
-- **C2C transforms** (`mpifft_generic.hpp`): Forward and backward transforms
-- **R2C/C2R transforms** (`mpifft_r2c.hpp`): Real-to-complex and inverse
+- **C2C transforms** (`parafaft_generic.hpp`): Forward and backward transforms
+- **R2C/C2R transforms** (`parafaft_r2c.hpp`): Real-to-complex and inverse
 - **3D/4D FFT**: All tests pass
 - **Serial validation**: MPI matches serial FFTW exactly
 
@@ -230,7 +222,7 @@ If all tests pass, your installation is working correctly!
 ## Next Steps
 
 1. Read `QUICKSTART.md` for usage guide
-2. Look at `example_3d_pencil.cpp` for code examples
+2. Look at `examples/example_3d_pencil.cpp` for code examples
 3. Check `README.md` for complete documentation
 4. See `test/README.md` for test details
 

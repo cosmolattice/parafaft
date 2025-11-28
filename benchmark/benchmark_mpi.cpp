@@ -1,4 +1,4 @@
-#include "../mpifft_generic.hpp"
+#include "../parafaft_generic.hpp"
 #include <iostream>
 #include <iomanip>
 #include <cmath>
@@ -39,7 +39,7 @@ int main(int argc, char** argv) {
     }
     auto t_setup_start = std::chrono::high_resolution_clock::now();
 
-    mpifft::PencilFFT<3> fft(global_shape);
+    parafaft::ParaFaFT<3> fft(global_shape);
 
     auto t_setup_end = std::chrono::high_resolution_clock::now();
     double setup_time = std::chrono::duration<double>(t_setup_end - t_setup_start).count();

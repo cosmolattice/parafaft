@@ -1,4 +1,4 @@
-#include "../../mpifft_generic.hpp"
+#include "../../parafaft_generic.hpp"
 #include <iostream>
 #include <cmath>
 
@@ -8,7 +8,7 @@ int main(int argc, char** argv) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
     int global_shape[3] = {32, 32, 32};
-    mpifft::PencilFFT<3> fft(global_shape);
+    parafaft::ParaFaFT<3> fft(global_shape);
 
     int local_size = fft.get_local_size();
     std::vector<std::complex<double>> data(local_size, {1.0, 0.0});

@@ -17,23 +17,23 @@ ALL_TESTS = $(C2C_TESTS) $(R2C_TESTS) $(UNIT_TESTS) $(REFERENCE_TESTS)
 all: $(ALL_TESTS)
 
 # C2C MPI Tests
-c2c/test_mpi_constant_32: c2c/test_mpi_constant_32.cpp ../mpifft_generic.hpp ../backend/fftw3/fft_backend_fftw.hpp
+c2c/test_mpi_constant_32: c2c/test_mpi_constant_32.cpp ../parafaft_generic.hpp ../backend/fftw3/fft_backend_fftw.hpp
 	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
 
-c2c/test_mpi_gaussian_roundtrip: c2c/test_mpi_gaussian_roundtrip.cpp ../mpifft_generic.hpp ../backend/fftw3/fft_backend_fftw.hpp
+c2c/test_mpi_gaussian_roundtrip: c2c/test_mpi_gaussian_roundtrip.cpp ../parafaft_generic.hpp ../backend/fftw3/fft_backend_fftw.hpp
 	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
 
-c2c/test_8cubed: c2c/test_8cubed.cpp ../mpifft_generic.hpp ../backend/fftw3/fft_backend_fftw.hpp
+c2c/test_8cubed: c2c/test_8cubed.cpp ../parafaft_generic.hpp ../backend/fftw3/fft_backend_fftw.hpp
 	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
 
-c2c/test_4d_roundtrip: c2c/test_4d_roundtrip.cpp ../mpifft_generic.hpp ../backend/fftw3/fft_backend_fftw.hpp
+c2c/test_4d_roundtrip: c2c/test_4d_roundtrip.cpp ../parafaft_generic.hpp ../backend/fftw3/fft_backend_fftw.hpp
 	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
 
 # R2C MPI Tests
-r2c/test_mpi_r2c_gaussian: r2c/test_mpi_r2c_gaussian.cpp ../mpifft_r2c.hpp ../backend/fftw3/fft_backend_fftw.hpp
+r2c/test_mpi_r2c_gaussian: r2c/test_mpi_r2c_gaussian.cpp ../parafaft_r2c.hpp ../backend/fftw3/fft_backend_fftw.hpp
 	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
 
-r2c/test_mpi_r2c_roundtrip: r2c/test_mpi_r2c_roundtrip.cpp ../mpifft_r2c.hpp ../backend/fftw3/fft_backend_fftw.hpp
+r2c/test_mpi_r2c_roundtrip: r2c/test_mpi_r2c_roundtrip.cpp ../parafaft_r2c.hpp ../backend/fftw3/fft_backend_fftw.hpp
 	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
 
 # Unit Tests (Backend)

@@ -8,7 +8,7 @@ all: benchmark_serial benchmark_mpi
 benchmark_serial: benchmark_serial.cpp
 	$(SERIAL_CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
 
-benchmark_mpi: benchmark_mpi.cpp ../mpifft_generic.hpp ../backend/fftw3/fft_backend_fftw.hpp
+benchmark_mpi: benchmark_mpi.cpp ../parafaft_generic.hpp ../backend/fftw3/fft_backend_fftw.hpp
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
 
 clean:

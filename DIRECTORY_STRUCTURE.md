@@ -4,12 +4,10 @@
 
 | File | Description |
 |------|-------------|
-| `mpifft_generic.hpp` | Primary C2C FFT implementation (dimension-agnostic) |
-| `mpifft_r2c.hpp` | R2C/C2R FFT implementation for real data |
+| `parafaft_generic.hpp` | Primary C2C FFT implementation (dimension-agnostic) |
+| `parafaft_r2c.hpp` | R2C/C2R FFT implementation for real data |
 | `fft_backend.hpp` | Backend abstraction interface |
 | `fft_backend_fftw.hpp` | FFTW backend implementation |
-| `example_3d_pencil.cpp` | 3D FFT usage example |
-| `example_4d_pencil.cpp` | 4D FFT usage example |
 | `Makefile` | Root build file |
 | `README.md` | Main documentation |
 | `QUICKSTART.md` | Getting started guide |
@@ -17,6 +15,15 @@
 | `SUMMARY.md` | Project summary |
 
 ## Directories
+
+### examples/
+Contains usage examples for the FFT library.
+
+| File | Description |
+|------|-------------|
+| `example_3d_pencil.cpp` | 3D C2C FFT usage example |
+| `example_4d_pencil.cpp` | 4D C2C FFT usage example |
+| `Makefile` | Example build configuration |
 
 ### test/
 Contains test suite for validating FFT implementations.
@@ -72,8 +79,8 @@ test/
    make run-all    # Run all tests
    make compare    # Validate vs serial
    ```
-4. **Use**: Include `mpifft_generic.hpp` (C2C) or `mpifft_r2c.hpp` (R2C) in your code
-5. **Reference**: Check examples in `example_3d_pencil.cpp`
+4. **Use**: Include `parafaft_generic.hpp` (C2C) or `parafaft_r2c.hpp` (R2C) in your code
+5. **Reference**: Check examples in `examples/example_3d_pencil.cpp`
 
 ---
 

@@ -1,12 +1,12 @@
-#ifndef MPIFFT_R2C_HPP
-#define MPIFFT_R2C_HPP
+#ifndef PARAFAFT_R2C_HPP
+#define PARAFAFT_R2C_HPP
 
 // ============================================================================
 // Real-to-Complex (R2C) / Complex-to-Real (C2R) Parallel FFT Implementation
 // ============================================================================
 //
 // This implementation extends the pencil decomposition approach from
-// mpifft_generic.hpp to handle real-valued data with full roundtrip support:
+// parafaft_generic.hpp to handle real-valued data with full roundtrip support:
 //   - forward(): R2C transform (real input → complex output)
 //   - backward(): C2R transform (complex input → real output)
 //
@@ -49,10 +49,10 @@
 #include <numeric>
 #include <iostream>
 
-namespace mpifft {
+namespace parafaft {
 
 // ============================================================================
-// Utility Functions (shared with mpifft_generic.hpp)
+// Utility Functions (shared with parafaft_generic.hpp)
 // ============================================================================
 
 // Balanced block-contiguous decomposition using Barry Smith's formula
@@ -105,14 +105,14 @@ inline void r2c_exchange(MPI_Comm comm, MPI_Datatype datatype, int ndims,
 }
 
 template<int D, typename Backend = FFTWBackend>
-class PencilFFT_R2C {
+class ParaFaFT_R2C {
 public:
     using Complex = std::complex<double>;
 
     // ========================================================================
     // Constructor: Setup Processor Grid and Pencil Decomposition for R2C
     // ========================================================================
-    PencilFFT_R2C(const int global_shape[D], MPI_Comm comm = MPI_COMM_WORLD)
+    ParaFaFT_R2C(const int global_shape[D], MPI_Comm comm = MPI_COMM_WORLD)
         : comm_world_(comm), backend_(D) {
 
         MPI_Comm_rank(comm_world_, &rank_);
@@ -172,7 +172,7 @@ public:
         create_backend_plans();
     }
 
-    ~PencilFFT_R2C() {
+    ~ParaFaFT_R2C() {
         int finalized;
         MPI_Finalized(&finalized);
         if (!finalized) {
@@ -581,6 +581,6 @@ private:
     Backend backend_;
 };
 
-} // namespace mpifft
+} // namespace parafaft
 
-#endif // MPIFFT_R2C_HPP
+#endif // PARAFAFT_R2C_HPP

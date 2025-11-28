@@ -1,12 +1,12 @@
-#ifndef MPIFFT_BACKEND_FFTW_HPP
-#define MPIFFT_BACKEND_FFTW_HPP
+#ifndef PARAFAFT_BACKEND_FFTW_HPP
+#define PARAFAFT_BACKEND_FFTW_HPP
 
 #include <fftw3.h>
 #include <complex>
 #include <vector>
 #include "../fft_backend.hpp"
 
-namespace mpifft {
+namespace parafaft {
 
 class FFTWBackend {
 public:
@@ -148,6 +148,6 @@ private:
     fftw_plan c2r_plan_ = nullptr;
 };
 
-} // namespace mpifft
+} // namespace parafaft
 
-#endif // MPIFFT_BACKEND_FFTW_HPP
+#endif // PARAFAFT_BACKEND_FFTW_HPP

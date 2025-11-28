@@ -4,7 +4,7 @@
 
 ```bash
 # Navigate to directory
-cd /path/to/mpifft
+cd /path/to/parafaft
 
 # Build and run all tests
 cd test
@@ -18,8 +18,8 @@ make compare
 
 ```bash
 # Build examples
-mpicxx example_3d_pencil.cpp -o example_3d_pencil -std=c++11 -I/opt/homebrew/include -L/opt/homebrew/lib -lfftw3
-mpicxx example_4d_pencil.cpp -o example_4d_pencil -std=c++11 -I/opt/homebrew/include -L/opt/homebrew/lib -lfftw3
+cd examples
+make all
 
 # Or build tests
 cd test
@@ -30,10 +30,10 @@ make all
 
 ```bash
 # 3D example (4 MPI ranks, 2×2 processor grid)
-mpirun -n 4 ./example_3d_pencil
+mpirun -n 4 ./examples/example_3d_pencil
 
 # 4D example (8 MPI ranks, 2×2×2 processor grid)
-mpirun -n 8 ./example_4d_pencil
+mpirun -n 8 ./examples/example_4d_pencil
 
 # Run test suite
 cd test
@@ -43,14 +43,14 @@ make run-all
 ## Basic Usage
 
 ```cpp
-#include "mpifft_generic.hpp"
+#include "parafaft_generic.hpp"
 
 int main(int argc, char** argv) {
     MPI_Init(&argc, &argv);
 
     // Create 3D FFT for 32×32×32 array
     int shape[3] = {32, 32, 32};
-    mpifft::PencilFFT<3> fft(shape);
+    parafaft::ParaFaFT<3> fft(shape);
 
     // Allocate local data
     int local_size = fft.get_local_size();
@@ -132,7 +132,7 @@ for (auto& val : data) val *= scale;
 Ensure FFT object is destroyed before `MPI_Finalize()`:
 ```cpp
 {
-    mpifft::PencilFFT<3> fft(shape);
+    parafaft::ParaFaFT<3> fft(shape);
     // Use fft...
 } // Destroyed here
 MPI_Finalize(); // Now safe
@@ -142,11 +142,11 @@ MPI_Finalize(); // Now safe
 
 | File | Description |
 |------|-------------|
-| `mpifft_generic.hpp` | Dimension-agnostic C2C transforms |
-| `mpifft_r2c.hpp` | R2C/C2R transforms for real data |
+| `parafaft_generic.hpp` | Dimension-agnostic C2C transforms |
+| `parafaft_r2c.hpp` | R2C/C2R transforms for real data |
 | `fft_backend_fftw.hpp` | FFTW backend implementation |
-| `example_3d_pencil.cpp` | 3D usage example |
-| `example_4d_pencil.cpp` | 4D usage example |
+| `examples/example_3d_pencil.cpp` | 3D usage example |
+| `examples/example_4d_pencil.cpp` | 4D usage example |
 | `test/` | Comprehensive test suite |
 | `test/README.md` | Detailed test documentation |
 
@@ -170,10 +170,10 @@ MPI_Finalize(); // Now safe
 For real-valued input data, use the R2C transform for better memory efficiency:
 
 ```cpp
-#include "mpifft_r2c.hpp"
+#include "parafaft_r2c.hpp"
 
 int global_shape[3] = {32, 32, 32};
-mpifft::PencilFFT_R2C<3> fft(global_shape);
+parafaft::ParaFaFT_R2C<3> fft(global_shape);
 
 std::vector<double> real_input(fft.get_local_real_size());
 std::vector<std::complex<double>> complex_output(fft.get_local_complex_size());
@@ -184,4 +184,4 @@ fft.backward(complex_output.data(), real_input.data());
 
 ---
 
-**Bottom Line**: Use `mpifft_generic.hpp` for C2C transforms or `mpifft_r2c.hpp` for real-valued data.
+**Bottom Line**: Use `parafaft_generic.hpp` for C2C transforms or `parafaft_r2c.hpp` for real-valued data.

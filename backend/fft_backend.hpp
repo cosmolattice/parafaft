@@ -1,9 +1,9 @@
-#ifndef MPIFFT_BACKEND_HPP
-#define MPIFFT_BACKEND_HPP
+#ifndef PARAFAFT_BACKEND_HPP
+#define PARAFAFT_BACKEND_HPP
 
 #include <complex>
 
-namespace mpifft {
+namespace parafaft {
 
 // Direction enum (abstracts FFTW_FORWARD/BACKWARD)
 enum class FFTDirection {
@@ -38,7 +38,7 @@ enum class FFTDirection {
 // allows applying the plan to different data arrays with the same layout.
 // This enables efficient reuse for operations on different memory slices.
 //
-// R2C Backend Extension (required for PencilFFT_R2C):
+// R2C Backend Extension (required for ParaFaFT_R2C):
 // In addition to the above methods, backends supporting R2C transforms must provide:
 //
 // 5. R2C plan creation (forward: real → complex):
@@ -78,6 +78,6 @@ enum class FFTDirection {
 // - Move-constructible (for storage in containers)
 // - Non-copyable (plans cannot be safely copied)
 
-} // namespace mpifft
+} // namespace parafaft
 
-#endif // MPIFFT_BACKEND_HPP
+#endif // PARAFAFT_BACKEND_HPP

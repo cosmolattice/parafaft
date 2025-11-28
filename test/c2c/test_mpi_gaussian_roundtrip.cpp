@@ -1,4 +1,4 @@
-#include "../../mpifft_generic.hpp"
+#include "../../parafaft_generic.hpp"
 #include <iostream>
 #include <iomanip>
 #include <fstream>
@@ -25,7 +25,7 @@ int main(int argc, char** argv) {
     const double sigma = 4.0;
 
     // Create FFT object
-    mpifft::PencilFFT<3> fft(global_shape);
+    parafaft::ParaFaFT<3> fft(global_shape);
 
     // Get local dimensions
     int local_size = fft.get_local_size();
