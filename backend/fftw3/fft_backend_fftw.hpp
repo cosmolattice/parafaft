@@ -45,63 +45,62 @@ public:
         );
     }
 
-    // Create R2C plan for first stage (real input → complex output)
-    void create_r2c_plan(
-        int length,      // Real-space length N
+    // Create in-place R2C plan for padded memory optimization
+    // Input: real values in padded buffer
+    // Output: complex values in same padded buffer (reinterpreted)
+    void create_r2c_inplace_plan(
+        int length,      // Real-space input length N
         int batch,       // Number of transforms
-        double* real_in,           // Real input array
-        std::complex<double>* complex_out,  // Complex output array
-        int istride,     // Input stride
-        int idist,       // Input distance between batches
-        int ostride,     // Output stride
-        int odist        // Output distance between batches
+        double* padded_real,    // Padded real buffer
+        int stride,      // Stride
+        int dist         // Distance between batches (padded: 2*(N/2+1) doubles)
     ) {
         int n[] = {length};
-        fftw_complex* fftw_out = reinterpret_cast<fftw_complex*>(complex_out);
+        fftw_complex* fftw_data = reinterpret_cast<fftw_complex*>(padded_real);
 
-        // R2C forward plan: real → complex (N → N/2+1)
-        r2c_plan_ = fftw_plan_many_dft_r2c(
+        // In-place R2C: real → complex in same buffer
+        r2c_inplace_plan_ = fftw_plan_many_dft_r2c(
             1, n, batch,
-            real_in, NULL, istride, idist,
-            fftw_out, NULL, ostride, odist,
+            padded_real, NULL, stride, dist,      // real input (dist in doubles)
+            fftw_data, NULL, stride, dist / 2,    // complex output (dist/2 in complex)
             FFTW_ESTIMATE
         );
     }
 
-    // Execute R2C plan
-    void execute_r2c(double* real_in, std::complex<double>* complex_out) {
-        fftw_execute_dft_r2c(r2c_plan_, real_in,
-                             reinterpret_cast<fftw_complex*>(complex_out));
+    // Execute in-place R2C plan
+    void execute_r2c_inplace(double* padded_real) {
+        fftw_execute_dft_r2c(r2c_inplace_plan_,
+                             padded_real,
+                             reinterpret_cast<fftw_complex*>(padded_real));
     }
 
-    // Create C2R plan for last stage (complex input → real output)
-    void create_c2r_plan(
+    // Create in-place C2R plan for padded memory optimization
+    // Input: complex values in padded real buffer (reinterpreted)
+    // Output: real values in same padded buffer
+    void create_c2r_inplace_plan(
         int length,      // Real-space output length N
         int batch,       // Number of transforms
-        std::complex<double>* complex_in,   // Complex input (size N/2+1)
-        double* real_out,                   // Real output (size N)
-        int istride,     // Input stride
-        int idist,       // Input distance between batches
-        int ostride,     // Output stride
-        int odist        // Output distance between batches
+        double* padded_real,    // Padded real buffer (also used as complex input)
+        int stride,      // Stride
+        int dist         // Distance between batches (padded: 2*(N/2+1))
     ) {
         int n[] = {length};
-        fftw_complex* fftw_in = reinterpret_cast<fftw_complex*>(complex_in);
+        fftw_complex* fftw_data = reinterpret_cast<fftw_complex*>(padded_real);
 
-        // C2R backward plan: complex → real (N/2+1 → N)
-        c2r_plan_ = fftw_plan_many_dft_c2r(
+        // In-place C2R: complex → real in same buffer
+        c2r_inplace_plan_ = fftw_plan_many_dft_c2r(
             1, n, batch,
-            fftw_in, NULL, istride, idist,
-            real_out, NULL, ostride, odist,
+            fftw_data, NULL, stride, dist / 2,  // dist/2 for complex stride
+            padded_real, NULL, stride, dist,
             FFTW_ESTIMATE
         );
     }
 
-    // Execute C2R plan
-    void execute_c2r(std::complex<double>* complex_in, double* real_out) {
-        fftw_execute_dft_c2r(c2r_plan_,
-                             reinterpret_cast<fftw_complex*>(complex_in),
-                             real_out);
+    // Execute in-place C2R plan
+    void execute_c2r_inplace(double* padded_real) {
+        fftw_execute_dft_c2r(c2r_inplace_plan_,
+                             reinterpret_cast<fftw_complex*>(padded_real),
+                             padded_real);
     }
 
     // Execute pre-created plan for specified stage on given data
@@ -121,8 +120,8 @@ public:
         for (auto plan : backward_plans_) {
             if (plan) fftw_destroy_plan(plan);
         }
-        if (r2c_plan_) fftw_destroy_plan(r2c_plan_);
-        if (c2r_plan_) fftw_destroy_plan(c2r_plan_);
+        if (r2c_inplace_plan_) fftw_destroy_plan(r2c_inplace_plan_);
+        if (c2r_inplace_plan_) fftw_destroy_plan(c2r_inplace_plan_);
     }
 
     // Disable copying (plans can't be safely copied)
@@ -133,19 +132,19 @@ public:
     FFTWBackend(FFTWBackend&& other) noexcept
         : forward_plans_(std::move(other.forward_plans_)),
           backward_plans_(std::move(other.backward_plans_)),
-          r2c_plan_(other.r2c_plan_),
-          c2r_plan_(other.c2r_plan_) {
+          r2c_inplace_plan_(other.r2c_inplace_plan_),
+          c2r_inplace_plan_(other.c2r_inplace_plan_) {
         std::fill(other.forward_plans_.begin(), other.forward_plans_.end(), nullptr);
         std::fill(other.backward_plans_.begin(), other.backward_plans_.end(), nullptr);
-        other.r2c_plan_ = nullptr;
-        other.c2r_plan_ = nullptr;
+        other.r2c_inplace_plan_ = nullptr;
+        other.c2r_inplace_plan_ = nullptr;
     }
 
 private:
     std::vector<fftw_plan> forward_plans_;
     std::vector<fftw_plan> backward_plans_;
-    fftw_plan r2c_plan_ = nullptr;
-    fftw_plan c2r_plan_ = nullptr;
+    fftw_plan r2c_inplace_plan_ = nullptr;
+    fftw_plan c2r_inplace_plan_ = nullptr;
 };
 
 } // namespace parafaft

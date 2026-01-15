@@ -9,6 +9,8 @@
 // parafaft_generic.hpp to handle real-valued data with full roundtrip support:
 //   - forward(): R2C transform (real input → complex output)
 //   - backward(): C2R transform (complex input → real output)
+//   - forward_in_place(): In-place R2C (buffer: real → complex)
+//   - backward_in_place(): In-place C2R (buffer: complex → real)
 //
 // Key differences from C2C:
 //   - Input type: real (double) instead of complex
@@ -16,11 +18,29 @@
 //   - First stage uses fftw_plan_many_dft_r2c (forward) / c2r (backward)
 //   - Subsequent stages use standard C2C FFT on reduced-size complex arrays
 //
+// In-Place API
+// -------------
+// The forward_in_place() and backward_in_place() methods operate fully in-place
+// on a single buffer. The buffer is reinterpreted between real and
+// complex views:
+//
+//   double* buffer = fftw_alloc_real(fft.get_local_in_place_buffer_size());
+//
+//   // Initialize real data (first N elements per row)
+//   // ...
+//
+//   fft.forward_in_place(buffer);  // Real → Complex (in-place)
+//   // Complex result: reinterpret_cast<Complex*>(buffer)
+//
+//   fft.backward_in_place(buffer); // Complex → Real (in-place)
+//   // Real result: first N elements per row
+//
+//   fftw_free(buffer);
+//
 // Memory Optimization
 // -------------------
-// Uses ping-pong buffering with two internal complex buffers instead of D+1
-// separate buffers. This reduces internal memory usage by 50-67% depending
-// on dimensionality (3D: 50%, 4D: 60%, 5D: 67%).
+// Uses ping-pong buffering with the user's padded buffer and one internal
+// complex buffer. This reduces memory usage compared to separate I/O buffers.
 //
 // Buffer Alignment Recommendation
 // -------------------------------
@@ -163,9 +183,8 @@ public:
             max_complex_size = std::max(max_complex_size, size);
         }
 
-        // Allocate two ping-pong buffers, each sized to handle any stage
-        // This replaces D+1 separate buffers with just 2, saving 50-67% memory
-        scratch_a_.resize(max_complex_size);
+        // Allocate ping-pong buffer sized to handle any stage
+        // (scratch_a_ was removed - only used during planning, now uses local temp)
         scratch_b_.resize(max_complex_size);
 
         // Create FFT plans
@@ -193,21 +212,65 @@ public:
     // @param real_input   Input real array (not modified; user retains ownership)
     // @param complex_output  Output complex array (will contain Fourier coefficients)
     //
-    // The input array is read directly without copying. For best performance,
-    // allocate with fftw_alloc_real().
+    // Implementation: Delegates to forward_padded() for the actual computation.
     // ========================================================================
     void forward(const double* real_input, Complex* complex_output) {
-        // No zero initialization needed - all buffers are fully overwritten
+        // Allocate temporary padded buffer
+        std::vector<double> padded_buffer(get_local_in_place_buffer_size());
 
-        // Stage 0: R2C FFT from user's real buffer directly to scratch_a
-        // Safety: FFTW R2C with FFTW_ESTIMATE preserves input array (unlike C2R).
-        // The const_cast is safe because fftw_execute_dft_r2c does not modify
-        // the input for out-of-place transforms planned with FFTW_ESTIMATE.
-        backend_.execute_r2c(const_cast<double*>(real_input), scratch_a_.data());
+        // Copy real input into padded buffer
+        copy_real_to_padded(real_input, padded_buffer.data());
 
-        // Ping-pong between internal buffers
-        Complex* src = scratch_a_.data();
-        Complex* dst = scratch_b_.data();
+        // In-place forward transform
+        forward_in_place(padded_buffer.data());
+
+        // Copy complex result from padded buffer to output
+        std::memcpy(complex_output, padded_buffer.data(),
+                    get_local_complex_size() * sizeof(Complex));
+    }
+
+    // ========================================================================
+    // Forward R2C Transform (Fully In-Place)
+    //
+    // @param buffer  In-place real/complex buffer
+    //                Size: get_local_in_place_buffer_size() doubles
+    //                Input: Real data in first N elements per row
+    //                Output: Complex data (reinterpret as Complex*)
+    //
+    // The transform is fully in-place. After completion, access complex
+    // output via: reinterpret_cast<Complex*>(buffer)
+    // Complex size: get_local_complex_size() elements (may differ from
+    // buffer_size/2 for final stage distribution)
+    //
+    // WARNING: Input real data is destroyed during computation!
+    // ========================================================================
+    void forward_in_place(double* padded_buffer) {
+        // Reinterpret padded real buffer as complex for ping-pong
+        Complex* padded_as_complex = reinterpret_cast<Complex*>(padded_buffer);
+
+        // Stage 0: In-place R2C FFT on padded buffer
+        backend_.execute_r2c_inplace(padded_buffer);
+
+        // Determine starting buffer based on parity of swaps
+        // D-1 iterations means D-1 swaps
+        // Even swaps: end where started; Odd swaps: end in opposite buffer
+        Complex* src;
+        Complex* dst;
+        if ((D - 1) % 2 == 0) {
+            // Even swaps: start at padded, end at padded
+            src = padded_as_complex;
+            dst = scratch_b_.data();
+        } else {
+            // Odd swaps: start at scratch_b, end at padded
+            // Need to copy R2C output to scratch_b_ first
+            int stage0_complex_size = 1;
+            for (int i = 0; i < D; ++i) {
+                stage0_complex_size *= stage_output_shapes_[0][i];
+            }
+            std::memcpy(scratch_b_.data(), padded_as_complex, stage0_complex_size * sizeof(Complex));
+            src = scratch_b_.data();
+            dst = padded_as_complex;
+        }
 
         // Stages 1 to D-1: MPI redistribute + C2C FFT
         for (int stage = 1; stage < D; ++stage) {
@@ -226,13 +289,8 @@ public:
             std::swap(src, dst);
         }
 
-        // After D-1 swaps, src points to result buffer
-        // Parity: D=3 → src=scratch_a, D=4 → src=scratch_b, etc.
-        int complex_size = 1;
-        for (int i = 0; i < D; ++i) {
-            complex_size *= stage_shapes_[D - 1][i];
-        }
-        std::memcpy(complex_output, src, complex_size * sizeof(Complex));
+        // After D-1 swaps, src points to padded_as_complex
+        // Result is already in place - no copy needed
     }
 
     // ========================================================================
@@ -241,23 +299,61 @@ public:
     // @param complex_input  Input complex array (not modified; user retains ownership)
     // @param real_output    Output real array (will contain reconstructed real data)
     //
-    // The output array is written directly without copying. For best performance,
-    // allocate with fftw_alloc_real().
+    // Implementation: Delegates to backward_padded() for the actual computation.
     // ========================================================================
     void backward(const Complex* complex_input, double* real_output) {
-        // No zero initialization needed - all buffers are fully overwritten
+        // Allocate temporary padded buffer
+        std::vector<double> padded_buffer(get_local_in_place_buffer_size());
 
-        // Copy input to internal buffer to start ping-pong
-        // (Cannot read user's complex_input directly because C2R may destroy its input)
-        int input_size = 1;
-        for (int i = 0; i < D; ++i) {
-            input_size *= stage_shapes_[D - 1][i];
+        // Copy complex input into padded buffer
+        std::memcpy(padded_buffer.data(), complex_input,
+                    get_local_complex_size() * sizeof(Complex));
+
+        // In-place backward transform
+        backward_in_place(padded_buffer.data());
+
+        // Copy real output from padded buffer
+        copy_padded_to_real(padded_buffer.data(), real_output);
+    }
+
+    // ========================================================================
+    // Backward C2R Transform (Fully In-Place)
+    //
+    // @param buffer  In-place complex/real buffer
+    //                Size: get_local_in_place_buffer_size() doubles
+    //                Input: Complex data (from forward_in_place or user)
+    //                Output: Real data in first N elements per row
+    //
+    // The transform is fully in-place. Input complex data is interpreted
+    // as reinterpret_cast<Complex*>(buffer). After completion,
+    // the buffer contains real data.
+    //
+    // WARNING: Input complex data is destroyed during computation!
+    // ========================================================================
+    void backward_in_place(double* padded_buffer) {
+        // Reinterpret padded real buffer as complex for ping-pong
+        Complex* padded_as_complex = reinterpret_cast<Complex*>(padded_buffer);
+
+        // Determine starting buffer based on parity
+        // We need src to point to padded_as_complex after D-1 swaps for in-place C2R
+        Complex* src;
+        Complex* dst;
+        if ((D - 1) % 2 == 0) {
+            // Even swaps: start at padded, end at padded
+            // Input is already in padded_as_complex - no copy needed
+            src = padded_as_complex;
+            dst = scratch_b_.data();
+        } else {
+            // Odd swaps: start at scratch_b, end at padded
+            // Must copy input from padded to scratch_b to start there
+            int input_size = 1;
+            for (int i = 0; i < D; ++i) {
+                input_size *= stage_shapes_[D - 1][i];
+            }
+            std::memcpy(scratch_b_.data(), padded_as_complex, input_size * sizeof(Complex));
+            src = scratch_b_.data();
+            dst = padded_as_complex;
         }
-        std::memcpy(scratch_a_.data(), complex_input, input_size * sizeof(Complex));
-
-        // Ping-pong between internal buffers
-        Complex* src = scratch_a_.data();
-        Complex* dst = scratch_b_.data();
 
         // Stages D-1 down to 1: C2C backward FFT + MPI redistribute
         for (int stage = D - 1; stage >= 1; --stage) {
@@ -276,10 +372,9 @@ public:
             std::swap(src, dst);
         }
 
-        // After D-1 swaps, src points to buffer with stage 0 data
-        // Parity: D=3 → src=scratch_a, D=4 → src=scratch_b, etc.
-        // Stage 0: C2R FFT directly to user's real buffer
-        backend_.execute_c2r(src, real_output);
+        // After D-1 swaps, src points to padded_as_complex
+        // Stage 0: In-place C2R FFT on padded buffer
+        backend_.execute_c2r_inplace(padded_buffer);
     }
 
     // ========================================================================
@@ -290,6 +385,18 @@ public:
         for (int i = 0; i < D; ++i) {
             size *= stage_shapes_[0][i];
         }
+        return size;
+    }
+
+    // Query function for in-place buffer size
+    // Returns: local_n[0] × ... × local_n[D-2] × 2×(N/2+1) doubles
+    // This equals stage 0 complex output size when interpreted as complex
+    int get_local_in_place_buffer_size() const {
+        int size = 1;
+        for (int i = 0; i < D - 1; ++i) {
+            size *= stage_shapes_[0][i];  // batch dimensions
+        }
+        size *= 2 * (global_real_shape_[D - 1] / 2 + 1);  // padded last dimension
         return size;
     }
 
@@ -370,6 +477,54 @@ public:
     }
 
 private:
+    // ========================================================================
+    // Helper: Copy non-padded real array to padded format
+    // ========================================================================
+    void copy_real_to_padded(const double* real_input, double* padded_output) const {
+        const int last_dim = global_real_shape_[D - 1];
+        const int complex_last_dim = global_real_shape_[D - 1] / 2 + 1;
+        const int padded_stride = 2 * complex_last_dim;
+
+        // Compute batch size (product of all dimensions except last)
+        int batch = 1;
+        for (int i = 0; i < D - 1; ++i) {
+            batch *= stage_shapes_[0][i];
+        }
+
+        // Copy each row, leaving padding uninitialized
+        for (int b = 0; b < batch; ++b) {
+            std::memcpy(
+                padded_output + b * padded_stride,
+                real_input + b * last_dim,
+                last_dim * sizeof(double)
+            );
+        }
+    }
+
+    // ========================================================================
+    // Helper: Copy padded real array to non-padded format
+    // ========================================================================
+    void copy_padded_to_real(const double* padded_input, double* real_output) const {
+        const int last_dim = global_real_shape_[D - 1];
+        const int complex_last_dim = global_real_shape_[D - 1] / 2 + 1;
+        const int padded_stride = 2 * complex_last_dim;
+
+        // Compute batch size (product of all dimensions except last)
+        int batch = 1;
+        for (int i = 0; i < D - 1; ++i) {
+            batch *= stage_shapes_[0][i];
+        }
+
+        // Copy each row, skipping padding
+        for (int b = 0; b < batch; ++b) {
+            std::memcpy(
+                real_output + b * last_dim,
+                padded_input + b * padded_stride,
+                last_dim * sizeof(double)
+            );
+        }
+    }
+
     // ========================================================================
     // Setup Stage Shapes for R2C
     // ========================================================================
@@ -467,32 +622,24 @@ private:
         int real_length = global_real_shape_[D - 1];
         int complex_length = global_complex_shape_[D - 1];
 
-        // Allocate temporary real buffer for plan creation only.
-        // FFTW's new-array execute requires arrays with same alignment as planning arrays.
-        // std::vector provides suitable alignment for FFTW with FFTW_ESTIMATE.
-        // Note: User buffers should ideally use fftw_alloc_real() for guaranteed alignment.
-        std::vector<double> temp_real(batch0 * real_length);
-
-        // R2C: real input → complex output (scratch_a_)
-        // Plan with temp_real, execute with user's real buffer at runtime
-        backend_.create_r2c_plan(
+        // In-place R2C and C2R plans for padded memory optimization
+        // Create temporary padded buffer for planning
+        std::vector<double> temp_padded(batch0 * 2 * complex_length);
+        int padded_dist = 2 * complex_length;  // 2*(N/2+1) doubles per transform
+        backend_.create_r2c_inplace_plan(
             real_length, batch0,
-            temp_real.data(), scratch_a_.data(),
-            1, real_length,
-            1, complex_length
+            temp_padded.data(),
+            1, padded_dist
+        );
+        backend_.create_c2r_inplace_plan(
+            real_length, batch0,
+            temp_padded.data(),
+            1, padded_dist
         );
 
-        // C2R plan: complex input → real output
-        // Plan with scratch_a_ and temp_real, execute with scratch buffer and user's real buffer
-        backend_.create_c2r_plan(
-            real_length, batch0,
-            scratch_a_.data(), temp_real.data(),
-            1, complex_length,
-            1, real_length
-        );
-
-        // Stages 1 to D-1: C2C plans (use scratch_a_ for planning)
+        // Stages 1 to D-1: C2C plans (use local temp buffer for planning only)
         // Note: For stages 1+, axis ranges from D-2 down to 0, never equal to D-1
+        std::vector<Complex> plan_temp(scratch_b_.size());  // Temporary for planning
         for (int stage = 1; stage < D; ++stage) {
             int axis = D - 1 - stage;  // axis ∈ [0, D-2] for stage ∈ [1, D-1]
             int length = global_complex_shape_[axis];
@@ -505,7 +652,7 @@ private:
                 }
                 int stride = batch;
                 backend_.create_stage_plan(stage, length, batch,
-                                          scratch_a_.data(), stride, 1);
+                                          plan_temp.data(), stride, 1);
             } else {
                 // Middle axes: need to handle via loops in perform_fft_on_buffer
                 int trailing_size = 1;
@@ -513,7 +660,7 @@ private:
                     trailing_size *= stage_shapes_[stage][i];
                 }
                 backend_.create_stage_plan(stage, length, trailing_size,
-                                          scratch_a_.data(), trailing_size, 1);
+                                          plan_temp.data(), trailing_size, 1);
             }
         }
     }
@@ -572,10 +719,9 @@ private:
     std::vector<std::vector<int>> stage_shapes_;
     std::vector<std::vector<int>> stage_output_shapes_;
 
-    // Working arrays - two ping-pong buffers for all stages
-    // Memory optimization: Only 2 buffers instead of D+1, reducing memory by 50-67%
-    std::vector<Complex> scratch_a_;  // Ping-pong buffer A
-    std::vector<Complex> scratch_b_;  // Ping-pong buffer B
+    // Working array - single ping-pong buffer (paired with user's padded buffer)
+    // Memory optimization: Only 1 internal buffer instead of D+1
+    std::vector<Complex> scratch_b_;  // Ping-pong buffer
 
     // FFT backend
     Backend backend_;

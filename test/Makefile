@@ -6,7 +6,7 @@ LDFLAGS = -L.. -L/opt/homebrew/lib -L/usr/lib/aarch64-linux-gnu -lfftw3
 
 # Test categories
 C2C_TESTS = c2c/test_mpi_constant_32 c2c/test_mpi_gaussian_roundtrip c2c/test_8cubed c2c/test_4d_roundtrip
-R2C_TESTS = r2c/test_mpi_r2c_gaussian r2c/test_mpi_r2c_roundtrip
+R2C_TESTS = r2c/test_mpi_r2c_gaussian r2c/test_mpi_r2c_roundtrip r2c/test_mpi_r2c_padded_roundtrip r2c/test_mpi_r2c_padded_gaussian
 UNIT_TESTS = unit/test_fftw_backend
 REFERENCE_TESTS = reference/reference_serial_3d reference/reference_serial_r2c_3d
 
@@ -34,6 +34,12 @@ r2c/test_mpi_r2c_gaussian: r2c/test_mpi_r2c_gaussian.cpp ../parafaft_r2c.hpp ../
 	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
 
 r2c/test_mpi_r2c_roundtrip: r2c/test_mpi_r2c_roundtrip.cpp ../parafaft_r2c.hpp ../backend/fftw3/fft_backend_fftw.hpp
+	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
+
+r2c/test_mpi_r2c_padded_roundtrip: r2c/test_mpi_r2c_padded_roundtrip.cpp ../parafaft_r2c.hpp ../backend/fftw3/fft_backend_fftw.hpp
+	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
+
+r2c/test_mpi_r2c_padded_gaussian: r2c/test_mpi_r2c_padded_gaussian.cpp ../parafaft_r2c.hpp ../backend/fftw3/fft_backend_fftw.hpp
 	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
 
 # Unit Tests (Backend)
@@ -65,6 +71,8 @@ run-r2c: $(R2C_TESTS)
 	@echo "=== Running R2C Tests ==="
 	mpirun -np 4 r2c/test_mpi_r2c_gaussian
 	mpirun -np 4 r2c/test_mpi_r2c_roundtrip
+	mpirun -np 4 r2c/test_mpi_r2c_padded_roundtrip
+	mpirun -np 4 r2c/test_mpi_r2c_padded_gaussian
 
 run-unit: $(UNIT_TESTS)
 	@echo "=== Running Unit Tests ==="
