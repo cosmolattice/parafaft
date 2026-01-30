@@ -124,7 +124,14 @@ inline void r2c_exchange(MPI_Comm comm, MPI_Datatype datatype, int ndims,
     }
 }
 
-template<int D, typename Backend = FFTWBackend>
+// Exchange strategy selection (compile-time)
+enum class ExchangeMethod {
+    Alltoallw,  // Default: MPI_Alltoallw with derived subarray types
+    Alltoall    // Alternative: MPI_Alltoall with explicit pack/unpack
+};
+
+template<int D, typename Backend = FFTWBackend,
+         ExchangeMethod Method = ExchangeMethod::Alltoallw>
 class ParaFaFT_R2C {
 public:
     using Complex = std::complex<double>;
@@ -186,6 +193,21 @@ public:
         // Allocate ping-pong buffer sized to handle any stage
         // (scratch_a_ was removed - only used during planning, now uses local temp)
         scratch_b_.resize(max_complex_size);
+
+        // Conditionally allocate alltoall buffers
+        if constexpr (Method == ExchangeMethod::Alltoall) {
+            compute_alltoall_block_sizes();
+            int max_alltoall_buf = 0;
+            for (int ex = 0; ex < D - 1; ++ex) {
+                int stage = ex + 1;
+                int axis = D - 1 - stage;
+                int P;
+                MPI_Comm_size(subcomms_[axis], &P);
+                max_alltoall_buf = std::max(max_alltoall_buf, P * block_sizes_[ex]);
+            }
+            alltoall_send_buf_.resize(max_alltoall_buf);
+            alltoall_recv_buf_.resize(max_alltoall_buf);
+        }
 
         // Create FFT plans
         create_backend_plans();
@@ -278,9 +300,16 @@ public:
             int prev_axis = axis + 1;
 
             // MPI exchange: src → dst
-            r2c_exchange(subcomms_[axis], MPI_C_DOUBLE_COMPLEX, D,
-                    stage_output_shapes_[stage - 1].data(), src, prev_axis,
-                    stage_shapes_[stage].data(), dst, axis);
+            if constexpr (Method == ExchangeMethod::Alltoall) {
+                r2c_exchange_alltoall(subcomms_[axis], D,
+                        stage_output_shapes_[stage - 1].data(), src, prev_axis,
+                        stage_shapes_[stage].data(), dst, axis,
+                        block_sizes_[stage - 1]);
+            } else {
+                r2c_exchange(subcomms_[axis], MPI_C_DOUBLE_COMPLEX, D,
+                        stage_output_shapes_[stage - 1].data(), src, prev_axis,
+                        stage_shapes_[stage].data(), dst, axis);
+            }
 
             // C2C FFT in-place on dst
             perform_fft_on_buffer(stage, axis, FFTDirection::Forward, dst);
@@ -364,9 +393,16 @@ public:
 
             // MPI exchange: src → dst
             int prev_axis = axis + 1;
-            r2c_exchange(subcomms_[axis], MPI_C_DOUBLE_COMPLEX, D,
-                    stage_shapes_[stage].data(), src, axis,
-                    stage_output_shapes_[stage - 1].data(), dst, prev_axis);
+            if constexpr (Method == ExchangeMethod::Alltoall) {
+                r2c_exchange_alltoall(subcomms_[axis], D,
+                        stage_shapes_[stage].data(), src, axis,
+                        stage_output_shapes_[stage - 1].data(), dst, prev_axis,
+                        block_sizes_[stage - 1]);
+            } else {
+                r2c_exchange(subcomms_[axis], MPI_C_DOUBLE_COMPLEX, D,
+                        stage_shapes_[stage].data(), src, axis,
+                        stage_output_shapes_[stage - 1].data(), dst, prev_axis);
+            }
 
             // Swap for next iteration
             std::swap(src, dst);
@@ -611,6 +647,90 @@ private:
     }
 
     // ========================================================================
+    // Compute Alltoall Block Sizes (one per exchange stage)
+    // ========================================================================
+    void compute_alltoall_block_sizes() {
+        for (int ex = 0; ex < D - 1; ++ex) {
+            int stage = ex + 1;
+            int axis = D - 1 - stage;
+            int send_axis = axis + 1;
+            int P;
+            MPI_Comm_size(subcomms_[axis], &P);
+
+            // Get this rank's send shape
+            const int* send_shape = stage_output_shapes_[stage - 1].data();
+
+            // Compute ceiling shape: max local size across all ranks in subcomm
+            int ceiling_shape[D];
+            MPI_Allreduce(send_shape, ceiling_shape, D, MPI_INT, MPI_MAX,
+                          subcomms_[axis]);
+
+            // Block size = product of ceiling dims, with partition axis
+            // replaced by ceil(full_axis / P)
+            int block = 1;
+            for (int d = 0; d < D; ++d) {
+                if (d == send_axis) {
+                    // Partition axis: ceiling of full_axis / P
+                    // send_shape[send_axis] is the global (undivided) axis
+                    block *= (send_shape[send_axis] + P - 1) / P;
+                } else {
+                    block *= ceiling_shape[d];
+                }
+            }
+            block_sizes_[ex] = block;
+        }
+    }
+
+    // ========================================================================
+    // Alternative exchange using MPI_Alltoall with explicit pack/unpack
+    // ========================================================================
+    void r2c_exchange_alltoall(MPI_Comm comm, int ndims,
+                               const int sizesA[], Complex* arrayA, int axisA,
+                               const int sizesB[], Complex* arrayB, int axisB,
+                               int B) {
+        int P;
+        MPI_Comm_size(comm, &P);
+
+        // ---- Pack: arrayA -> alltoall_send_buf_ ----
+        int leadA = 1;
+        for (int d = 0; d < axisA; ++d) leadA *= sizesA[d];
+        int trailA = 1;
+        for (int d = axisA + 1; d < ndims; ++d) trailA *= sizesA[d];
+
+        for (int s = 0; s < P; ++s) {
+            int chunk, start;
+            r2c_decompose(sizesA[axisA], P, s, chunk, start);
+            for (int i = 0; i < leadA; ++i) {
+                std::memcpy(
+                    alltoall_send_buf_.data() + s * B + i * chunk * trailA,
+                    arrayA + i * sizesA[axisA] * trailA + start * trailA,
+                    chunk * trailA * sizeof(Complex));
+            }
+        }
+
+        // ---- All-to-all ----
+        MPI_Alltoall(alltoall_send_buf_.data(), B, MPI_C_DOUBLE_COMPLEX,
+                     alltoall_recv_buf_.data(), B, MPI_C_DOUBLE_COMPLEX, comm);
+
+        // ---- Unpack: alltoall_recv_buf_ -> arrayB ----
+        int leadB = 1;
+        for (int d = 0; d < axisB; ++d) leadB *= sizesB[d];
+        int trailB = 1;
+        for (int d = axisB + 1; d < ndims; ++d) trailB *= sizesB[d];
+
+        for (int s = 0; s < P; ++s) {
+            int chunk, start;
+            r2c_decompose(sizesB[axisB], P, s, chunk, start);
+            for (int i = 0; i < leadB; ++i) {
+                std::memcpy(
+                    arrayB + i * sizesB[axisB] * trailB + start * trailB,
+                    alltoall_recv_buf_.data() + s * B + i * chunk * trailB,
+                    chunk * trailB * sizeof(Complex));
+            }
+        }
+    }
+
+    // ========================================================================
     // Create Backend Plans
     // ========================================================================
     void create_backend_plans() {
@@ -722,6 +842,13 @@ private:
     // Working array - single ping-pong buffer (paired with user's padded buffer)
     // Memory optimization: Only 1 internal buffer instead of D+1
     std::vector<Complex> scratch_b_;  // Ping-pong buffer
+
+    // Alltoall exchange buffers (only allocated when Method == ExchangeMethod::Alltoall)
+    std::vector<Complex> alltoall_send_buf_;
+    std::vector<Complex> alltoall_recv_buf_;
+    // Padded block sizes per exchange stage (D-1 exchanges, indexed 0..D-2)
+    // block_sizes_[i] = padded block size B for exchange at stage (i+1)
+    int block_sizes_[D - 1];
 
     // FFT backend
     Backend backend_;

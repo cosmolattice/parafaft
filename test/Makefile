@@ -1,12 +1,12 @@
 # Makefile for parallel FFT tests - reorganized structure
 CXX = mpicxx
 SERIAL_CXX = g++
-CXXFLAGS = -std=c++11 -I.. -I../include -I/opt/homebrew/include
+CXXFLAGS = -std=c++17 -I.. -I../include -I/opt/homebrew/include
 LDFLAGS = -L.. -L/opt/homebrew/lib -L/usr/lib/aarch64-linux-gnu -lfftw3
 
 # Test categories
 C2C_TESTS = c2c/test_mpi_constant_32 c2c/test_mpi_gaussian_roundtrip c2c/test_8cubed c2c/test_4d_roundtrip
-R2C_TESTS = r2c/test_mpi_r2c_gaussian r2c/test_mpi_r2c_roundtrip r2c/test_mpi_r2c_padded_roundtrip r2c/test_mpi_r2c_padded_gaussian
+R2C_TESTS = r2c/test_mpi_r2c_gaussian r2c/test_mpi_r2c_roundtrip r2c/test_mpi_r2c_padded_roundtrip r2c/test_mpi_r2c_padded_gaussian r2c/test_mpi_r2c_alltoall_roundtrip
 UNIT_TESTS = unit/test_fftw_backend
 REFERENCE_TESTS = reference/reference_serial_3d reference/reference_serial_r2c_3d
 
@@ -42,16 +42,19 @@ r2c/test_mpi_r2c_padded_roundtrip: r2c/test_mpi_r2c_padded_roundtrip.cpp ../para
 r2c/test_mpi_r2c_padded_gaussian: r2c/test_mpi_r2c_padded_gaussian.cpp ../parafaft_r2c.hpp ../backend/fftw3/fft_backend_fftw.hpp
 	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
 
+r2c/test_mpi_r2c_alltoall_roundtrip: r2c/test_mpi_r2c_alltoall_roundtrip.cpp ../parafaft_r2c.hpp ../backend/fftw3/fft_backend_fftw.hpp
+	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
+
 # Unit Tests (Backend)
 unit/test_fftw_backend: unit/test_fftw_backend.cpp ../backend/fft_backend.hpp ../backend/fftw3/fft_backend_fftw.hpp
 	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
 
 # Serial Reference Tests
 reference/reference_serial_3d: reference/reference_serial_3d.cpp
-	$(SERIAL_CXX) -std=c++11 -I../include -I/opt/homebrew/include $< -o $@ -L.. -L/opt/homebrew/lib -L/usr/lib/aarch64-linux-gnu -lfftw3
+	$(SERIAL_CXX) -std=c++17 -I../include -I/opt/homebrew/include $< -o $@ -L.. -L/opt/homebrew/lib -L/usr/lib/aarch64-linux-gnu -lfftw3
 
 reference/reference_serial_r2c_3d: reference/reference_serial_r2c_3d.cpp
-	$(SERIAL_CXX) -std=c++11 -I../include -I/opt/homebrew/include $< -o $@ -L.. -L/opt/homebrew/lib -L/usr/lib/aarch64-linux-gnu -lfftw3
+	$(SERIAL_CXX) -std=c++17 -I../include -I/opt/homebrew/include $< -o $@ -L.. -L/opt/homebrew/lib -L/usr/lib/aarch64-linux-gnu -lfftw3
 
 # Clean
 clean:
@@ -73,6 +76,7 @@ run-r2c: $(R2C_TESTS)
 	mpirun -np 4 r2c/test_mpi_r2c_roundtrip
 	mpirun -np 4 r2c/test_mpi_r2c_padded_roundtrip
 	mpirun -np 4 r2c/test_mpi_r2c_padded_gaussian
+	mpirun -np 4 r2c/test_mpi_r2c_alltoall_roundtrip
 
 run-unit: $(UNIT_TESTS)
 	@echo "=== Running Unit Tests ==="
