@@ -2,13 +2,30 @@ cmake_minimum_required(VERSION 3.10)
 project(ParallelFFTTests)
 
 # Set C++ standard
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Find required packages
 find_package(MPI REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(FFTW3 REQUIRED fftw3)
+
+include(CheckLanguage)
+option(CUDA "Build with CUDA support" OFF)
+if(CUDA)
+    check_language(CUDA)
+    if(!CMAKE_CUDA_COMPILER)
+        message(FATAL_ERROR "CUDA support requested but no CUDA compiler found.")
+    endif()
+    enable_language(CUDA)
+
+    find_package(CUDAToolkit REQUIRED)
+
+    include_directories(${CUDA_INCLUDE_DIRS})
+    link_directories(${CUDA_LIBRARY_DIRS})
+else()
+    message(STATUS "Building without CUDA support")
+endif()
 
 # Include directories
 include_directories(
@@ -106,6 +123,19 @@ target_compile_options(test_mpi_r2c_padded_gaussian PRIVATE ${MPI_COMPILE_FLAGS}
 set_target_properties(test_mpi_r2c_padded_gaussian PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/r2c
 )
+
+# cufft tests
+if(CUDA)
+    add_executable(test_mpi_r2c_roundtrip_cufft r2c/test_mpi_r2c_roundtrip_cufft.cu)
+    target_link_libraries(test_mpi_r2c_roundtrip_cufft ${MPI_LIBRARIES} ${FFTW3_LIBRARIES} ${CUDA_LIBRARIES} CUDA::cufft_static 
+    ${CMAKE_DL_LIBS})
+    target_compile_options(test_mpi_r2c_roundtrip_cufft PRIVATE ${MPI_COMPILE_FLAGS})
+
+    set_target_properties(test_mpi_r2c_roundtrip_cufft PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/r2c
+        CUDA_SEPARABLE_COMPILATION ON
+    )
+endif()
 
 # Unit Tests (Backend)
 add_executable(test_fftw_backend unit/test_fftw_backend.cpp)
