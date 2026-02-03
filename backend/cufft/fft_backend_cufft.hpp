@@ -140,15 +140,20 @@ namespace parafaft
     void create_stage_plan(int stage, int length, int batch, Complex *data, int stride, int dist)
     {
       int n[] = {length};
-      // Use NULL for embed to let cuFFT infer layout from stride/dist (matches FFTW behavior)
+      // IMPORTANT: Unlike FFTW, cuFFT ignores stride/dist when inembed/onembed are NULL!
+      // We must explicitly set inembed/onembed = n to match FFTW behavior.
+      // With embed = n, cuFFT will use the provided stride and dist values.
+      int inembed[] = {length};
+      int onembed[] = {length};
 
       // Create forward plan
-      check_cufft(cufftPlanMany(&forward_plans_[stage], 1, n, NULL, stride, dist, NULL, stride, dist, CUFFT_Z2Z, batch),
-                  "cufftPlanMany C2C forward");
+      check_cufft(
+          cufftPlanMany(&forward_plans_[stage], 1, n, inembed, stride, dist, onembed, stride, dist, CUFFT_Z2Z, batch),
+          "cufftPlanMany C2C forward");
 
       // Create backward plan
       check_cufft(
-          cufftPlanMany(&backward_plans_[stage], 1, n, NULL, stride, dist, NULL, stride, dist, CUFFT_Z2Z, batch),
+          cufftPlanMany(&backward_plans_[stage], 1, n, inembed, stride, dist, onembed, stride, dist, CUFFT_Z2Z, batch),
           "cufftPlanMany C2C backward");
     }
 
