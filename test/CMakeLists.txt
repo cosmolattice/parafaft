@@ -130,13 +130,88 @@ set_target_properties(test_mpi_r2c_padded_gaussian PROPERTIES
 
 # cufft tests
 if(CUDA)
+    # C2C cuFFT MPI Tests
+    add_executable(test_mpi_constant_32_cufft c2c/test_mpi_constant_32_cufft.cu)
+    target_link_libraries(test_mpi_constant_32_cufft ${MPI_LIBRARIES} CUDA::cufft_static ${CMAKE_DL_LIBS})
+    target_compile_options(test_mpi_constant_32_cufft PRIVATE ${MPI_COMPILE_FLAGS})
+    set_target_properties(test_mpi_constant_32_cufft PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c2c
+        CUDA_SEPARABLE_COMPILATION ON
+    )
+
+    add_executable(test_mpi_gaussian_roundtrip_cufft c2c/test_mpi_gaussian_roundtrip_cufft.cu)
+    target_link_libraries(test_mpi_gaussian_roundtrip_cufft ${MPI_LIBRARIES} CUDA::cufft_static ${CMAKE_DL_LIBS})
+    target_compile_options(test_mpi_gaussian_roundtrip_cufft PRIVATE ${MPI_COMPILE_FLAGS})
+    set_target_properties(test_mpi_gaussian_roundtrip_cufft PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c2c
+        CUDA_SEPARABLE_COMPILATION ON
+    )
+
+    add_executable(test_8cubed_cufft c2c/test_8cubed_cufft.cu)
+    target_link_libraries(test_8cubed_cufft ${MPI_LIBRARIES} CUDA::cufft_static ${CMAKE_DL_LIBS})
+    target_compile_options(test_8cubed_cufft PRIVATE ${MPI_COMPILE_FLAGS})
+    set_target_properties(test_8cubed_cufft PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c2c
+        CUDA_SEPARABLE_COMPILATION ON
+    )
+
+    add_executable(test_4d_roundtrip_cufft c2c/test_4d_roundtrip_cufft.cu)
+    target_link_libraries(test_4d_roundtrip_cufft ${MPI_LIBRARIES} CUDA::cufft_static ${CMAKE_DL_LIBS})
+    target_compile_options(test_4d_roundtrip_cufft PRIVATE ${MPI_COMPILE_FLAGS})
+    set_target_properties(test_4d_roundtrip_cufft PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c2c
+        CUDA_SEPARABLE_COMPILATION ON
+    )
+
+    # R2C cuFFT MPI Tests
     add_executable(test_mpi_r2c_roundtrip_cufft r2c/test_mpi_r2c_roundtrip_cufft.cu)
     target_link_libraries(test_mpi_r2c_roundtrip_cufft ${MPI_LIBRARIES} ${FFTW3_LIBRARIES} ${CUDA_LIBRARIES} CUDA::cufft_static 
     ${CMAKE_DL_LIBS})
     target_compile_options(test_mpi_r2c_roundtrip_cufft PRIVATE ${MPI_COMPILE_FLAGS})
-
     set_target_properties(test_mpi_r2c_roundtrip_cufft PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/r2c
+        CUDA_SEPARABLE_COMPILATION ON
+    )
+
+    add_executable(test_mpi_r2c_gaussian_cufft r2c/test_mpi_r2c_gaussian_cufft.cu)
+    target_link_libraries(test_mpi_r2c_gaussian_cufft ${MPI_LIBRARIES} CUDA::cufft_static ${CMAKE_DL_LIBS})
+    target_compile_options(test_mpi_r2c_gaussian_cufft PRIVATE ${MPI_COMPILE_FLAGS})
+    set_target_properties(test_mpi_r2c_gaussian_cufft PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/r2c
+        CUDA_SEPARABLE_COMPILATION ON
+    )
+
+    add_executable(test_mpi_r2c_padded_roundtrip_cufft r2c/test_mpi_r2c_padded_roundtrip_cufft.cu)
+    target_link_libraries(test_mpi_r2c_padded_roundtrip_cufft ${MPI_LIBRARIES} CUDA::cufft_static ${CMAKE_DL_LIBS})
+    target_compile_options(test_mpi_r2c_padded_roundtrip_cufft PRIVATE ${MPI_COMPILE_FLAGS})
+    set_target_properties(test_mpi_r2c_padded_roundtrip_cufft PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/r2c
+        CUDA_SEPARABLE_COMPILATION ON
+    )
+
+    add_executable(test_mpi_r2c_padded_gaussian_cufft r2c/test_mpi_r2c_padded_gaussian_cufft.cu)
+    target_link_libraries(test_mpi_r2c_padded_gaussian_cufft ${MPI_LIBRARIES} CUDA::cufft_static ${CMAKE_DL_LIBS})
+    target_compile_options(test_mpi_r2c_padded_gaussian_cufft PRIVATE ${MPI_COMPILE_FLAGS})
+    set_target_properties(test_mpi_r2c_padded_gaussian_cufft PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/r2c
+        CUDA_SEPARABLE_COMPILATION ON
+    )
+
+    # Unit Tests (cuFFT Backend)
+    add_executable(test_cufft_backend unit/test_cufft_backend_r2c.cu)
+    target_link_libraries(test_cufft_backend ${MPI_LIBRARIES} ${FFTW3_LIBRARIES} ${CUDA_LIBRARIES} CUDA::cufft_static 
+    ${CMAKE_DL_LIBS})
+    target_compile_options(test_cufft_backend PRIVATE ${MPI_COMPILE_FLAGS})
+    set_target_properties(test_cufft_backend PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/unit
+        CUDA_SEPARABLE_COMPILATION ON
+    )
+
+    add_executable(test_cufft_backend_c2c unit/test_cufft_backend_c2c.cu)
+    target_link_libraries(test_cufft_backend_c2c ${MPI_LIBRARIES} CUDA::cufft_static ${CMAKE_DL_LIBS})
+    target_compile_options(test_cufft_backend_c2c PRIVATE ${MPI_COMPILE_FLAGS})
+    set_target_properties(test_cufft_backend_c2c PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/unit
         CUDA_SEPARABLE_COMPILATION ON
     )
 endif()
@@ -148,16 +223,6 @@ target_compile_options(test_fftw_backend PRIVATE ${MPI_COMPILE_FLAGS})
 set_target_properties(test_fftw_backend PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/unit
 )
-if(CUDA)
-    add_executable(test_cufft_backend unit/test_cufft_backend_r2c.cu)
-    target_link_libraries(test_cufft_backend ${MPI_LIBRARIES} ${FFTW3_LIBRARIES} ${CUDA_LIBRARIES} CUDA::cufft_static 
-    ${CMAKE_DL_LIBS})
-    target_compile_options(test_cufft_backend PRIVATE ${MPI_COMPILE_FLAGS})
-    set_target_properties(test_cufft_backend PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/unit
-        CUDA_SEPARABLE_COMPILATION ON
-    )
-endif()
 
 # Serial Reference Tests (using standard g++ compiler)
 add_executable(reference_serial_3d reference/reference_serial_3d.cpp)
@@ -193,6 +258,28 @@ set(REFERENCE_TESTS
     reference_serial_3d 
     reference_serial_r2c_3d
 )
+
+# cuFFT test groups (only defined if CUDA is enabled)
+if(CUDA)
+    set(C2C_CUFFT_TESTS 
+        test_mpi_constant_32_cufft 
+        test_mpi_gaussian_roundtrip_cufft 
+        test_8cubed_cufft 
+        test_4d_roundtrip_cufft
+    )
+
+    set(R2C_CUFFT_TESTS 
+        test_mpi_r2c_gaussian_cufft 
+        test_mpi_r2c_roundtrip_cufft 
+        test_mpi_r2c_padded_roundtrip_cufft 
+        test_mpi_r2c_padded_gaussian_cufft
+    )
+
+    set(UNIT_CUFFT_TESTS 
+        test_cufft_backend 
+        test_cufft_backend_c2c
+    )
+endif()
 
 # Create directories for output files
 file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/c2c)
@@ -241,6 +328,42 @@ add_custom_target(run-all
     DEPENDS run-unit run-reference run-c2c run-r2c
 )
 
+# cuFFT run targets (only defined if CUDA is enabled)
+if(CUDA)
+    add_custom_target(run-c2c-cufft
+        COMMENT "Running C2C cuFFT Tests"
+        COMMAND echo "=== Running C2C cuFFT Tests ==="
+        COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/c2c/test_mpi_constant_32_cufft
+        COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/c2c/test_mpi_gaussian_roundtrip_cufft
+        COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/c2c/test_8cubed_cufft
+        COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/c2c/test_4d_roundtrip_cufft
+        DEPENDS ${C2C_CUFFT_TESTS}
+    )
+
+    add_custom_target(run-r2c-cufft
+        COMMENT "Running R2C cuFFT Tests"
+        COMMAND echo "=== Running R2C cuFFT Tests ==="
+        COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/r2c/test_mpi_r2c_gaussian_cufft
+        COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/r2c/test_mpi_r2c_roundtrip_cufft
+        COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/r2c/test_mpi_r2c_padded_roundtrip_cufft
+        COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/r2c/test_mpi_r2c_padded_gaussian_cufft
+        DEPENDS ${R2C_CUFFT_TESTS}
+    )
+
+    add_custom_target(run-unit-cufft
+        COMMENT "Running cuFFT Unit Tests"
+        COMMAND echo "=== Running cuFFT Unit Tests ==="
+        COMMAND ${CMAKE_BINARY_DIR}/unit/test_cufft_backend
+        COMMAND ${CMAKE_BINARY_DIR}/unit/test_cufft_backend_c2c
+        DEPENDS ${UNIT_CUFFT_TESTS}
+    )
+
+    add_custom_target(run-all-cufft
+        COMMENT "Running All cuFFT Tests"
+        DEPENDS run-unit-cufft run-c2c-cufft run-r2c-cufft
+    )
+endif()
+
 # Compare MPI output with serial reference
 add_custom_target(compare
     COMMENT "Comparing MPI vs Serial Output"
@@ -262,12 +385,20 @@ add_custom_target(show-help
     COMMAND echo "  cmake --build .         - Build all tests"
     COMMAND echo "  cmake --build . --target clean - Remove all built files"
     COMMAND echo ""
-    COMMAND echo "Run targets:"
-    COMMAND echo "  cmake --build . --target run-unit      - Run backend unit tests"
+    COMMAND echo "Run targets (FFTW backend):"
+    COMMAND echo "  cmake --build . --target run-unit      - Run FFTW backend unit tests"
     COMMAND echo "  cmake --build . --target run-reference - Run serial reference tests"
-    COMMAND echo "  cmake --build . --target run-c2c       - Run C2C MPI tests"
-    COMMAND echo "  cmake --build . --target run-r2c       - Run R2C MPI tests"
-    COMMAND echo "  cmake --build . --target run-all       - Run all tests"
+    COMMAND echo "  cmake --build . --target run-c2c       - Run C2C MPI tests (FFTW)"
+    COMMAND echo "  cmake --build . --target run-r2c       - Run R2C MPI tests (FFTW)"
+    COMMAND echo "  cmake --build . --target run-all       - Run all FFTW tests"
+    COMMAND echo ""
+    COMMAND echo "Run targets (cuFFT backend - requires CUDA=ON):"
+    COMMAND echo "  cmake --build . --target run-unit-cufft - Run cuFFT backend unit tests"
+    COMMAND echo "  cmake --build . --target run-c2c-cufft  - Run C2C MPI tests (cuFFT)"
+    COMMAND echo "  cmake --build . --target run-r2c-cufft  - Run R2C MPI tests (cuFFT)"
+    COMMAND echo "  cmake --build . --target run-all-cufft  - Run all cuFFT tests"
+    COMMAND echo ""
+    COMMAND echo "Other targets:"
     COMMAND echo "  cmake --build . --target compare       - Compare MPI vs serial output"
     COMMAND echo "  cmake --build . --target show-help     - Display this help message"
     COMMAND echo ""
@@ -293,3 +424,19 @@ add_test(NAME r2c_gaussian COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/r2c/test_mpi
 add_test(NAME r2c_roundtrip COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/r2c/test_mpi_r2c_roundtrip)
 add_test(NAME r2c_padded_roundtrip COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/r2c/test_mpi_r2c_padded_roundtrip)
 add_test(NAME r2c_padded_gaussian COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/r2c/test_mpi_r2c_padded_gaussian)
+
+# cuFFT tests (only added if CUDA is enabled)
+if(CUDA)
+    add_test(NAME unit_cufft_r2c COMMAND ${CMAKE_BINARY_DIR}/unit/test_cufft_backend)
+    add_test(NAME unit_cufft_c2c COMMAND ${CMAKE_BINARY_DIR}/unit/test_cufft_backend_c2c)
+
+    add_test(NAME c2c_constant_32_cufft COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/c2c/test_mpi_constant_32_cufft)
+    add_test(NAME c2c_gaussian_roundtrip_cufft COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/c2c/test_mpi_gaussian_roundtrip_cufft)
+    add_test(NAME c2c_8cubed_cufft COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/c2c/test_8cubed_cufft)
+    add_test(NAME c2c_4d_roundtrip_cufft COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/c2c/test_4d_roundtrip_cufft)
+
+    add_test(NAME r2c_gaussian_cufft COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/r2c/test_mpi_r2c_gaussian_cufft)
+    add_test(NAME r2c_roundtrip_cufft COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/r2c/test_mpi_r2c_roundtrip_cufft)
+    add_test(NAME r2c_padded_roundtrip_cufft COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/r2c/test_mpi_r2c_padded_roundtrip_cufft)
+    add_test(NAME r2c_padded_gaussian_cufft COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/r2c/test_mpi_r2c_padded_gaussian_cufft)
+endif()
