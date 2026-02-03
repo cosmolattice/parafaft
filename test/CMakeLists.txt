@@ -23,6 +23,10 @@ if(CUDA)
 
     include_directories(${CUDA_INCLUDE_DIRS})
     link_directories(${CUDA_LIBRARY_DIRS})
+    # if CMAKE_CUDA_ARCHITECTURES is not set, set it to native
+    if(NOT CMAKE_CUDA_ARCHITECTURES)
+        set(CMAKE_CUDA_ARCHITECTURES "native")
+    endif()
 else()
     message(STATUS "Building without CUDA support")
 endif()
@@ -144,6 +148,16 @@ target_compile_options(test_fftw_backend PRIVATE ${MPI_COMPILE_FLAGS})
 set_target_properties(test_fftw_backend PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/unit
 )
+if(CUDA)
+    add_executable(test_cufft_backend unit/test_cufft_backend_r2c.cu)
+    target_link_libraries(test_cufft_backend ${MPI_LIBRARIES} ${FFTW3_LIBRARIES} ${CUDA_LIBRARIES} CUDA::cufft_static 
+    ${CMAKE_DL_LIBS})
+    target_compile_options(test_cufft_backend PRIVATE ${MPI_COMPILE_FLAGS})
+    set_target_properties(test_cufft_backend PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/unit
+        CUDA_SEPARABLE_COMPILATION ON
+    )
+endif()
 
 # Serial Reference Tests (using standard g++ compiler)
 add_executable(reference_serial_3d reference/reference_serial_3d.cpp)
