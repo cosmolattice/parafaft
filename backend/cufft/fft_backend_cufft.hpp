@@ -71,7 +71,16 @@ namespace parafaft
       stage_metadata_[stage] = {length, batch, stride, dist};
 
       // Buffer size for complex data
-      size_t size_complex = static_cast<size_t>((batch - 1) * dist + length);
+      // For strided FFT: size = (batch-1)*dist + (length-1)*stride + 1
+      // For typical usage: stride=trailing_size, dist=1 → size = batch + (length-1)*stride
+      size_t size_complex;
+      if (stride >= dist) {
+        // Strided case: length transforms of size 'length' with stride 'stride'
+        size_complex = static_cast<size_t>(batch - 1) * dist + static_cast<size_t>(length - 1) * stride + 1;
+      } else {
+        // Contiguous case: standard batched FFT
+        size_complex = static_cast<size_t>((batch - 1) * dist + length);
+      }
 
       // Allocate or reallocate device buffer if needed
       if (c2c_device_buffer_ == nullptr || size_complex > c2c_buffer_size_) {
@@ -83,17 +92,15 @@ namespace parafaft
       }
 
       int n[] = {length};
-      // CRITICAL: Provide explicit embed arrays for cuFFT (NULL doesn't work like FFTW)
-      int embed[] = {length};
+      // Use NULL for embed to let cuFFT infer layout from stride/dist (matches FFTW behavior)
 
       // Create forward plan
-      check_cufft(
-          cufftPlanMany(&forward_plans_[stage], 1, n, embed, stride, dist, embed, stride, dist, CUFFT_Z2Z, batch),
-          "cufftPlanMany C2C forward");
+      check_cufft(cufftPlanMany(&forward_plans_[stage], 1, n, NULL, stride, dist, NULL, stride, dist, CUFFT_Z2Z, batch),
+                  "cufftPlanMany C2C forward");
 
       // Create backward plan
       check_cufft(
-          cufftPlanMany(&backward_plans_[stage], 1, n, embed, stride, dist, embed, stride, dist, CUFFT_Z2Z, batch),
+          cufftPlanMany(&backward_plans_[stage], 1, n, NULL, stride, dist, NULL, stride, dist, CUFFT_Z2Z, batch),
           "cufftPlanMany C2C backward");
     }
 
@@ -101,7 +108,21 @@ namespace parafaft
     void execute_stage(int stage, FFTDirection direction, std::complex<double> *data)
     {
       auto &meta = stage_metadata_[stage];
-      size_t size_bytes = c2c_buffer_size_ * sizeof(cufftDoubleComplex);
+
+      // Calculate actual data size for this stage
+      // For strided FFT: size = (batch-1)*dist + (length-1)*stride + 1
+      // For typical usage: stride=trailing_size, dist=1 → size = batch + (length-1)*stride
+      size_t data_size;
+      if (meta.stride >= meta.dist) {
+        // Strided case: length transforms of size 'length' with stride 'stride'
+        data_size =
+            static_cast<size_t>(meta.batch - 1) * meta.dist + static_cast<size_t>(meta.length - 1) * meta.stride + 1;
+      } else {
+        // Contiguous case: standard batched FFT
+        data_size = static_cast<size_t>(meta.batch - 1) * meta.dist + meta.length;
+      }
+
+      size_t size_bytes = data_size * sizeof(cufftDoubleComplex);
 
       // Transfer host -> device
       check_cuda(cudaMemcpy(c2c_device_buffer_, data, size_bytes, cudaMemcpyHostToDevice), "cudaMemcpy H2D C2C");
@@ -148,14 +169,12 @@ namespace parafaft
       }
 
       // R2C: N real inputs -> N/2+1 complex outputs
-      // CRITICAL: Asymmetric embed values - input and output sizes differ!
+      // Use NULL for embed to let cuFFT infer layout from stride/dist (matches FFTW behavior)
       int n[] = {length};
-      int inembed[] = {2 * (length / 2 + 1)}; // Real input: padded size
-      int onembed[] = {length / 2 + 1};       // Complex output: N/2+1 elements
 
       // Note: output dist is half of input dist (complex elements vs doubles)
-      check_cufft(cufftPlanMany(&r2c_plan_, 1, n, inembed, stride, dist, // Real input layout
-                                onembed, stride, dist / 2,               // Complex output layout
+      check_cufft(cufftPlanMany(&r2c_plan_, 1, n, NULL, stride, dist, // Real input layout
+                                NULL, stride, dist / 2,               // Complex output layout
                                 CUFFT_D2Z, batch),
                   "cufftPlanMany R2C");
     }
@@ -206,13 +225,11 @@ namespace parafaft
       }
 
       // C2R: N/2+1 complex inputs -> N real outputs
-      // CRITICAL: Asymmetric embed - reversed from R2C
+      // Use NULL for embed to let cuFFT infer layout from stride/dist (matches FFTW behavior)
       int n[] = {length};
-      int inembed[] = {length / 2 + 1};       // Complex input: N/2+1 elements
-      int onembed[] = {2 * (length / 2 + 1)}; // Real output: padded size
 
-      check_cufft(cufftPlanMany(&c2r_plan_, 1, n, inembed, stride, dist / 2, // Complex input layout
-                                onembed, stride, dist,                       // Real output layout
+      check_cufft(cufftPlanMany(&c2r_plan_, 1, n, NULL, stride, dist / 2, // Complex input layout
+                                NULL, stride, dist,                       // Real output layout
                                 CUFFT_Z2D, batch),
                   "cufftPlanMany C2R");
     }
