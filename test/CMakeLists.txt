@@ -214,6 +214,13 @@ if(CUDA)
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/unit
         CUDA_SEPARABLE_COMPILATION ON
     )
+
+    add_executable(test_cuvector unit/test_cuvector.cu)
+    target_link_libraries(test_cuvector CUDA::cudart ${CMAKE_DL_LIBS})
+    set_target_properties(test_cuvector PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/unit
+        CUDA_SEPARABLE_COMPILATION ON
+    )
 endif()
 
 # Unit Tests (Backend)

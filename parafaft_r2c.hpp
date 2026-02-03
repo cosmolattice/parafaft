@@ -129,7 +129,9 @@ namespace parafaft
   template <int D, typename Backend = FFTWBackend> class ParaFaFT_R2C
   {
   public:
-    using Complex = std::complex<double>;
+    using Complex = typename Backend::Complex;
+    using Buffer = typename Backend::Buffer;
+    using ComplexBuffer = typename Backend::ComplexBuffer;
 
     // ========================================================================
     // Constructor: Setup Processor Grid and Pencil Decomposition for R2C
@@ -220,7 +222,7 @@ namespace parafaft
     void forward(const double *real_input, Complex *complex_output)
     {
       // Allocate temporary padded buffer
-      std::vector<double> padded_buffer(get_local_in_place_buffer_size());
+      Buffer padded_buffer(get_local_in_place_buffer_size());
 
       // Copy real input into padded buffer
       copy_real_to_padded(real_input, padded_buffer.data());
@@ -229,7 +231,7 @@ namespace parafaft
       forward_in_place(padded_buffer.data());
 
       // Copy complex result from padded buffer to output
-      std::memcpy(complex_output, padded_buffer.data(), get_local_complex_size() * sizeof(Complex));
+      backend_.memcpy(complex_output, padded_buffer.data(), get_local_complex_size() * sizeof(Complex));
     }
 
     // ========================================================================
@@ -271,7 +273,7 @@ namespace parafaft
         for (int i = 0; i < D; ++i) {
           stage0_complex_size *= stage_output_shapes_[0][i];
         }
-        std::memcpy(scratch_b_.data(), padded_as_complex, stage0_complex_size * sizeof(Complex));
+        backend_.memcpy(scratch_b_.data(), padded_as_complex, stage0_complex_size * sizeof(Complex));
         src = scratch_b_.data();
         dst = padded_as_complex;
       }
@@ -310,7 +312,7 @@ namespace parafaft
       std::vector<double> padded_buffer(get_local_in_place_buffer_size());
 
       // Copy complex input into padded buffer
-      std::memcpy(padded_buffer.data(), complex_input, get_local_complex_size() * sizeof(Complex));
+      backend_.memcpy(padded_buffer.data(), complex_input, get_local_complex_size() * sizeof(Complex));
 
       // In-place backward transform
       backward_in_place(padded_buffer.data());
@@ -354,7 +356,7 @@ namespace parafaft
         for (int i = 0; i < D; ++i) {
           input_size *= stage_shapes_[D - 1][i];
         }
-        std::memcpy(scratch_b_.data(), padded_as_complex, input_size * sizeof(Complex));
+        backend_.memcpy(scratch_b_.data(), padded_as_complex, input_size * sizeof(Complex));
         src = scratch_b_.data();
         dst = padded_as_complex;
       }
@@ -505,7 +507,7 @@ namespace parafaft
 
       // Copy each row, leaving padding uninitialized
       for (int b = 0; b < batch; ++b) {
-        std::memcpy(padded_output + b * padded_stride, real_input + b * last_dim, last_dim * sizeof(double));
+        backend_.memcpy(padded_output + b * padded_stride, real_input + b * last_dim, last_dim * sizeof(double));
       }
     }
 
@@ -526,7 +528,7 @@ namespace parafaft
 
       // Copy each row, skipping padding
       for (int b = 0; b < batch; ++b) {
-        std::memcpy(real_output + b * last_dim, padded_input + b * padded_stride, last_dim * sizeof(double));
+        backend_.memcpy(real_output + b * last_dim, padded_input + b * padded_stride, last_dim * sizeof(double));
       }
     }
 
@@ -630,14 +632,14 @@ namespace parafaft
 
       // In-place R2C and C2R plans for padded memory optimization
       // Create temporary padded buffer for planning
-      std::vector<double> temp_padded(batch0 * 2 * complex_length);
+      Buffer temp_padded(batch0 * 2 * complex_length);
       int padded_dist = 2 * complex_length; // 2*(N/2+1) doubles per transform
       backend_.create_r2c_inplace_plan(real_length, batch0, temp_padded.data(), 1, padded_dist);
       backend_.create_c2r_inplace_plan(real_length, batch0, temp_padded.data(), 1, padded_dist);
 
       // Stages 1 to D-1: C2C plans (use local temp buffer for planning only)
       // Note: For stages 1+, axis ranges from D-2 down to 0, never equal to D-1
-      std::vector<Complex> plan_temp(scratch_b_.size()); // Temporary for planning
+      ComplexBuffer plan_temp(scratch_b_.size()); // Temporary for planning
       for (int stage = 1; stage < D; ++stage) {
         int axis = D - 1 - stage; // axis ∈ [0, D-2] for stage ∈ [1, D-1]
         int length = global_complex_shape_[axis];
@@ -718,7 +720,7 @@ namespace parafaft
 
     // Working array - single ping-pong buffer (paired with user's padded buffer)
     // Memory optimization: Only 1 internal buffer instead of D+1
-    std::vector<Complex> scratch_b_; // Ping-pong buffer
+    ComplexBuffer scratch_b_; // Ping-pong buffer
 
     // FFT backend
     Backend backend_;

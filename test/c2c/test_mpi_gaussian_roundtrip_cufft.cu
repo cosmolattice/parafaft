@@ -69,12 +69,20 @@ int main(int argc, char **argv)
     std::cout << "Performing forward FFT (cuFFT backend)...\n";
   }
 
+  // copy the data to device
+  std::complex<double> *d_data = nullptr;
+  cudaMalloc((void **)&d_data, local_size * sizeof(std::complex<double>));
+  cudaMemcpy((void *)d_data, data.data(), local_size * sizeof(std::complex<double>), cudaMemcpyHostToDevice);
+
   // Forward FFT
-  fft.forward(data.data());
+  fft.forward(d_data);
 
   if (rank == 0) {
     std::cout << "After forward: data[0] = " << data[0] << "\n";
   }
+
+  // copy the data back to host
+  cudaMemcpy((void *)data.data(), d_data, local_size * sizeof(std::complex<double>), cudaMemcpyDeviceToHost);
 
   // Save transformed data - need to gather from all ranks
   // After forward FFT, data is in stage C distribution: [N0, n0, n1]
@@ -112,7 +120,6 @@ int main(int argc, char **argv)
   if (rank == 0) {
     gathered_data.resize(displs[nranks - 1] + sizes[nranks - 1]);
   }
-
   MPI_Gatherv(data.data(), final_size, MPI_C_DOUBLE_COMPLEX, gathered_data.data(), sizes.data(), displs.data(),
               MPI_C_DOUBLE_COMPLEX, 0, MPI_COMM_WORLD);
 
@@ -159,6 +166,9 @@ int main(int argc, char **argv)
 
   // Backward FFT
   fft.backward(data.data());
+
+  // copy the data back to host
+  cudaMemcpy((void *)data.data(), d_data, local_size * sizeof(std::complex<double>), cudaMemcpyDeviceToHost);
 
   if (rank == 0) {
     std::cout << "After backward (before norm): data[0] = " << data[0] << "\n";
