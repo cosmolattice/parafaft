@@ -219,9 +219,8 @@ namespace parafaft
     // ========================================================================
     void forward(const double *real_input, Complex *complex_output)
     {
-      // Allocate temporary padded buffer (get_local_in_place_buffer_size() returns the size for complex<double>, so we
-      // multiply by 2)
-      std::vector<double> padded_buffer(2 * get_local_in_place_buffer_size());
+      // Allocate temporary padded buffer
+      std::vector<double> padded_buffer(get_local_in_place_buffer_size());
 
       // Copy real input into padded buffer
       copy_real_to_padded(real_input, padded_buffer.data());
@@ -394,15 +393,15 @@ namespace parafaft
     }
 
     // Query function for in-place buffer size
-    // Returns: local_n[0] × ... × local_n[D-2] × 2×(N/2+1) doubles
-    // This equals stage 0 complex output size when interpreted as complex
+    // Returns: local_n[0] × ... × local_n[D-2] × 2×(N/2+2) doubles
+    // This equals stage 0 complex output size when interpreted as double
     int get_local_in_place_buffer_size() const
     {
       int size = 1;
       for (int i = 0; i < D - 1; ++i) {
-        size *= 2 * stage_shapes_[0][i]; // batch dimensions
+        size *= stage_shapes_[0][i]; // batch dimensions (multiplied by 2)
       }
-      size *= 2 * (global_real_shape_[D - 1] / 2 + 1); // padded last dimension
+      size *= 2 * (global_real_shape_[D - 1] / 2 + 2); // padded last dimension (2 doubles per complex)
       return size;
     }
 
