@@ -125,8 +125,7 @@ namespace parafaft
     CuFFTBackend(CuFFTBackend &&other) noexcept
         : num_stages_(other.num_stages_), forward_plans_(std::move(other.forward_plans_)),
           backward_plans_(std::move(other.backward_plans_)), r2c_plan_(other.r2c_plan_), c2r_plan_(other.c2r_plan_),
-          r2c_length_(other.r2c_length_), r2c_batch_(other.r2c_batch_), r2c_dist_(other.r2c_dist_),
-          stage_metadata_(std::move(other.stage_metadata_))
+          r2c_length_(other.r2c_length_), r2c_batch_(other.r2c_batch_), r2c_dist_(other.r2c_dist_)
     {
       // Clear moved-from object
       std::fill(other.forward_plans_.begin(), other.forward_plans_.end(), 0);
@@ -140,12 +139,6 @@ namespace parafaft
     // Create and store plans for a specific stage (C2C transforms)
     void create_stage_plan(int stage, int length, int batch, Complex *data, int stride, int dist)
     {
-      // Store stage metadata
-      if (stage_metadata_.size() <= static_cast<size_t>(stage)) {
-        stage_metadata_.resize(stage + 1);
-      }
-      stage_metadata_[stage] = {length, batch, stride, dist};
-
       int n[] = {length};
       // Use NULL for embed to let cuFFT infer layout from stride/dist (matches FFTW behavior)
 
@@ -165,10 +158,9 @@ namespace parafaft
       // Execute C2C transform
       cufftHandle plan = (direction == FFTDirection::Forward) ? forward_plans_[stage] : backward_plans_[stage];
       int cufft_direction = (direction == FFTDirection::Forward) ? CUFFT_FORWARD : CUFFT_INVERSE;
+      cufftDoubleComplex *cufft_data = reinterpret_cast<cufftDoubleComplex *>(data);
 
-      check_cufft(cufftExecZ2Z(plan, reinterpret_cast<cufftDoubleComplex *>(data),
-                               reinterpret_cast<cufftDoubleComplex *>(data), cufft_direction),
-                  "cufftExecZ2Z");
+      check_cufft(cufftExecZ2Z(plan, cufft_data, cufft_data, cufft_direction), "cufftExecZ2Z");
 
       // Synchronize
       check_cuda(cudaDeviceSynchronize(), "cudaDeviceSynchronize C2C");
@@ -198,11 +190,12 @@ namespace parafaft
     // Execute in-place R2C plan
     void execute_r2c_inplace(double *device_padded_real)
     {
+      cufftDoubleReal *input_data = reinterpret_cast<cufftDoubleReal *>(device_padded_real);
+      cufftDoubleComplex *output_data = reinterpret_cast<cufftDoubleComplex *>(device_padded_real);
+
       // Execute R2C (D2Z = double to Z complex)
       // In-place: output overwrites input buffer
-      check_cufft(cufftExecD2Z(r2c_plan_, reinterpret_cast<cufftDoubleReal *>(device_padded_real),
-                               reinterpret_cast<cufftDoubleComplex *>(device_padded_real)),
-                  "cufftExecD2Z");
+      check_cufft(cufftExecD2Z(r2c_plan_, input_data, output_data), "cufftExecD2Z");
 
       // Synchronize
       check_cuda(cudaDeviceSynchronize(), "cudaDeviceSynchronize R2C");
@@ -231,10 +224,12 @@ namespace parafaft
     // Execute in-place C2R plan
     void execute_c2r_inplace(double *device_padded_real)
     {
+      cufftDoubleComplex *input_data = reinterpret_cast<cufftDoubleComplex *>(device_padded_real);
+      cufftDoubleReal *output_data = reinterpret_cast<cufftDoubleReal *>(device_padded_real);
+
       // Execute C2R (Z2D = Z complex to double)
-      check_cufft(cufftExecZ2D(c2r_plan_, reinterpret_cast<cufftDoubleComplex *>(device_padded_real),
-                               reinterpret_cast<cufftDoubleReal *>(device_padded_real)),
-                  "cufftExecZ2D");
+      check_cufft(cufftExecZ2D(c2r_plan_, input_data, output_data), "cufftExecZ2D");
+
       // Synchronize
       check_cuda(cudaDeviceSynchronize(), "cudaDeviceSynchronize C2R");
     }
@@ -259,15 +254,6 @@ namespace parafaft
     int r2c_length_ = 0;
     int r2c_batch_ = 0;
     int r2c_dist_ = 0;
-
-    // Stage metadata for C2C transforms
-    struct StageMetadata {
-      int length;
-      int batch;
-      int stride;
-      int dist;
-    };
-    std::vector<StageMetadata> stage_metadata_;
 
     // Helper: Check cuFFT result and throw on error
     static void check_cufft(cufftResult result, const char *operation)
