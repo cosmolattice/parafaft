@@ -46,7 +46,7 @@ namespace parafaft
           backward_plans_(std::move(other.backward_plans_)), r2c_plan_(other.r2c_plan_), c2r_plan_(other.c2r_plan_),
           device_buffer_(other.device_buffer_), buffer_size_(other.buffer_size_), r2c_length_(other.r2c_length_),
           r2c_batch_(other.r2c_batch_), r2c_dist_(other.r2c_dist_), c2c_device_buffer_(other.c2c_device_buffer_),
-          c2c_buffer_size_(other.c2c_buffer_size_)
+          c2c_buffer_size_(other.c2c_buffer_size_), stage_metadata_(std::move(other.stage_metadata_))
     {
       // Clear moved-from object
       std::fill(other.forward_plans_.begin(), other.forward_plans_.end(), 0);
