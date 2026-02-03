@@ -31,7 +31,7 @@ void test_contiguous_layout()
 
   // Copy to device
   parafaft::CuFFTBackend::ComplexBuffer data(N * batch);
-  parafaft::CuFFTBackend::memcpy(data.data(), host_data.data(), N * batch * sizeof(std::complex<double>));
+  cudaMemcpy(data.data(), host_data.data(), N * batch * sizeof(std::complex<double>), cudaMemcpyHostToDevice);
 
   // Create backend and plan
   parafaft::CuFFTBackend backend(1);
@@ -41,8 +41,10 @@ void test_contiguous_layout()
   backend.execute_stage(0, parafaft::FFTDirection::Forward, data.data());
   backend.execute_stage(0, parafaft::FFTDirection::Backward, data.data());
 
+  // Wipe host data
+  std::fill(host_data.begin(), host_data.end(), std::complex<double>(0.0, 0.0));
   // Copy back to host
-  parafaft::CuFFTBackend::memcpy(host_data.data(), data.data(), N * batch * sizeof(std::complex<double>));
+  cudaMemcpy(host_data.data(), data.data(), N * batch * sizeof(std::complex<double>), cudaMemcpyDeviceToHost);
 
   // Normalize
   for (auto &val : host_data) {
@@ -82,7 +84,7 @@ void test_strided_layout()
 
   // Copy to device
   parafaft::CuFFTBackend::ComplexBuffer data(N * batch);
-  parafaft::CuFFTBackend::memcpy(data.data(), host_data.data(), N * batch * sizeof(std::complex<double>));
+  cudaMemcpy(data.data(), host_data.data(), N * batch * sizeof(std::complex<double>), cudaMemcpyHostToDevice);
 
   // Create backend and plan
   parafaft::CuFFTBackend backend(1);
@@ -92,8 +94,10 @@ void test_strided_layout()
   backend.execute_stage(0, parafaft::FFTDirection::Forward, data.data());
   backend.execute_stage(0, parafaft::FFTDirection::Backward, data.data());
 
+  // Wipe host data
+  std::fill(host_data.begin(), host_data.end(), std::complex<double>(0.0, 0.0));
   // Copy back to host
-  parafaft::CuFFTBackend::memcpy(host_data.data(), data.data(), N * batch * sizeof(std::complex<double>));
+  cudaMemcpy(host_data.data(), data.data(), N * batch * sizeof(std::complex<double>), cudaMemcpyDeviceToHost);
 
   // Normalize
   for (auto &val : host_data) {
@@ -135,8 +139,8 @@ void test_multiple_stages()
   std::vector<parafaft::CuFFTBackend::ComplexBuffer> stage_data(num_stages);
   for (int stage = 0; stage < num_stages; ++stage) {
     stage_data[stage].resize(N);
-    parafaft::CuFFTBackend::memcpy(stage_data[stage].data(), host_stage_data[stage].data(),
-                                   N * sizeof(std::complex<double>));
+    cudaMemcpy(stage_data[stage].data(), host_stage_data[stage].data(), N * sizeof(std::complex<double>),
+               cudaMemcpyHostToDevice);
   }
 
   // Create backend with 3 stages
@@ -152,9 +156,11 @@ void test_multiple_stages()
       backend.execute_stage(stage, parafaft::FFTDirection::Forward, stage_data[stage].data());
       backend.execute_stage(stage, parafaft::FFTDirection::Backward, stage_data[stage].data());
 
+      // Wipe host data
+      std::fill(host_stage_data[stage].begin(), host_stage_data[stage].end(), std::complex<double>(0.0, 0.0));
       // Copy back to host for error checking
-      parafaft::CuFFTBackend::memcpy(host_stage_data[stage].data(), stage_data[stage].data(),
-                                     N * sizeof(std::complex<double>));
+      cudaMemcpy(host_stage_data[stage].data(), stage_data[stage].data(), N * sizeof(std::complex<double>),
+                 cudaMemcpyDeviceToHost);
 
       // Normalize
       for (auto &val : host_stage_data[stage]) {
@@ -201,9 +207,9 @@ void test_different_pointers()
   parafaft::CuFFTBackend::ComplexBuffer data1(N * batch);
   parafaft::CuFFTBackend::ComplexBuffer data2(N * batch);
   parafaft::CuFFTBackend::ComplexBuffer data3(N * batch);
-  parafaft::CuFFTBackend::memcpy(data1.data(), host_data1.data(), N * batch * sizeof(std::complex<double>));
-  parafaft::CuFFTBackend::memcpy(data2.data(), host_data2.data(), N * batch * sizeof(std::complex<double>));
-  parafaft::CuFFTBackend::memcpy(data3.data(), host_data3.data(), N * batch * sizeof(std::complex<double>));
+  cudaMemcpy(data1.data(), host_data1.data(), N * batch * sizeof(std::complex<double>), cudaMemcpyHostToDevice);
+  cudaMemcpy(data2.data(), host_data2.data(), N * batch * sizeof(std::complex<double>), cudaMemcpyHostToDevice);
+  cudaMemcpy(data3.data(), host_data3.data(), N * batch * sizeof(std::complex<double>), cudaMemcpyHostToDevice);
 
   // Create single backend and plan (using data1 for plan creation)
   parafaft::CuFFTBackend backend(1);
@@ -212,22 +218,28 @@ void test_different_pointers()
   // Apply the same plan to all three different arrays
   backend.execute_stage(0, parafaft::FFTDirection::Forward, data1.data());
   backend.execute_stage(0, parafaft::FFTDirection::Backward, data1.data());
+  // Wipe host data
+  std::fill(host_data1.begin(), host_data1.end(), std::complex<double>(0.0, 0.0));
   // Copy back to host for normalization
-  parafaft::CuFFTBackend::memcpy(host_data1.data(), data1.data(), N * batch * sizeof(std::complex<double>));
+  cudaMemcpy(host_data1.data(), data1.data(), N * batch * sizeof(std::complex<double>), cudaMemcpyDeviceToHost);
   for (auto &val : host_data1)
     val /= N;
 
   backend.execute_stage(0, parafaft::FFTDirection::Forward, data2.data());
   backend.execute_stage(0, parafaft::FFTDirection::Backward, data2.data());
+  // Wipe host data
+  std::fill(host_data2.begin(), host_data2.end(), std::complex<double>(0.0, 0.0));
   // Copy back to host for normalization
-  parafaft::CuFFTBackend::memcpy(host_data2.data(), data2.data(), N * batch * sizeof(std::complex<double>));
+  cudaMemcpy(host_data2.data(), data2.data(), N * batch * sizeof(std::complex<double>), cudaMemcpyDeviceToHost);
   for (auto &val : host_data2)
     val /= N;
 
   backend.execute_stage(0, parafaft::FFTDirection::Forward, data3.data());
   backend.execute_stage(0, parafaft::FFTDirection::Backward, data3.data());
+  // Wipe host data
+  std::fill(host_data3.begin(), host_data3.end(), std::complex<double>(0.0, 0.0));
   // Copy back to host for normalization
-  parafaft::CuFFTBackend::memcpy(host_data3.data(), data3.data(), N * batch * sizeof(std::complex<double>));
+  cudaMemcpy(host_data3.data(), data3.data(), N * batch * sizeof(std::complex<double>), cudaMemcpyDeviceToHost);
   for (auto &val : host_data3)
     val /= N;
 
@@ -261,7 +273,7 @@ void test_move_constructor()
 
   // Copy to device
   parafaft::CuFFTBackend::ComplexBuffer data(N);
-  parafaft::CuFFTBackend::memcpy(data.data(), host_data.data(), N * sizeof(std::complex<double>));
+  cudaMemcpy(data.data(), host_data.data(), N * sizeof(std::complex<double>), cudaMemcpyHostToDevice);
 
   parafaft::CuFFTBackend backend1(1);
   backend1.create_stage_plan(0, N, batch, data.data(), 1, N);
@@ -273,8 +285,10 @@ void test_move_constructor()
   backend2.execute_stage(0, parafaft::FFTDirection::Forward, data.data());
   backend2.execute_stage(0, parafaft::FFTDirection::Backward, data.data());
 
+  // Wipe host data
+  std::fill(host_data.begin(), host_data.end(), std::complex<double>(0.0, 0.0));
   // Copy back to host
-  parafaft::CuFFTBackend::memcpy(host_data.data(), data.data(), N * sizeof(std::complex<double>));
+  cudaMemcpy(host_data.data(), data.data(), N * sizeof(std::complex<double>), cudaMemcpyDeviceToHost);
 
   for (auto &val : host_data) {
     val /= N;

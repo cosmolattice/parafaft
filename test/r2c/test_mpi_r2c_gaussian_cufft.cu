@@ -1,12 +1,54 @@
 // cuFFT version of test_mpi_r2c_gaussian.cpp
 #include "../../parafaft_r2c.hpp"
 #include "../../backend/cufft/fft_backend_cufft.hpp"
+#include <fftw3.h>
 #include <iostream>
-#include <iomanip>
-#include <fstream>
 #include <cmath>
 #include <vector>
 #include <cstdlib>
+
+// Generate serial FFTW R2C reference result
+std::vector<std::complex<double>> generate_fftw_r2c_reference(int N0, int N1, int N2, double center0, double center1,
+                                                              double center2, double sigma)
+{
+  int complex_N2 = N2 / 2 + 1;
+  int real_size = N0 * N1 * N2;
+  int complex_size = N0 * N1 * complex_N2;
+
+  std::vector<double> real_data(real_size);
+  std::vector<std::complex<double>> complex_data(complex_size);
+
+  // Initialize Gaussian
+  for (int i0 = 0; i0 < N0; ++i0) {
+    for (int i1 = 0; i1 < N1; ++i1) {
+      for (int i2 = 0; i2 < N2; ++i2) {
+        double x = i0 - center0;
+        double y = i1 - center1;
+        double z = i2 - center2;
+        double r2 = x * x + y * y + z * z;
+        int idx = (i0 * N1 + i1) * N2 + i2;
+        real_data[idx] = std::exp(-r2 / (2.0 * sigma * sigma));
+      }
+    }
+  }
+
+  // Copy to the device
+  parafaft::CuFFTBackend::Buffer device_real_data(real_size);
+  parafaft::CuFFTBackend::ComplexBuffer device_complex_data(complex_size);
+  cudaMemcpy(device_real_data.data(), real_data.data(), real_size * sizeof(double), cudaMemcpyHostToDevice);
+
+  // Create cuFFT plan
+  cufftHandle plan;
+  cufftPlan3d(&plan, N0, N1, N2, CUFFT_D2Z);
+  cufftExecD2Z(plan, device_real_data.data(), reinterpret_cast<cufftDoubleComplex *>(device_complex_data.data()));
+  cufftDestroy(plan);
+
+  // Copy back to host
+  cudaMemcpy(complex_data.data(), device_complex_data.data(), complex_size * sizeof(parafaft::CuFFTBackend::Complex),
+             cudaMemcpyDeviceToHost);
+
+  return complex_data;
+}
 
 int main(int argc, char **argv)
 {
@@ -71,8 +113,17 @@ int main(int argc, char **argv)
     std::cout << "Complex output shape: " << N0 << "x" << N1 << "x" << complex_N2 << "\n";
   }
 
+  // Allocate device buffers and copy data
+  parafaft::CuFFTBackend::Buffer device_real_data(local_real_size);
+  parafaft::CuFFTBackend::ComplexBuffer device_complex_data(local_complex_size);
+  cudaMemcpy(device_real_data.data(), real_data.data(), local_real_size * sizeof(double), cudaMemcpyHostToDevice);
+
   // Perform parallel R2C FFT
-  fft.forward(real_data.data(), complex_data.data());
+  fft.forward(device_real_data.data(), device_complex_data.data());
+
+  // Copy back complex data to host
+  cudaMemcpy(complex_data.data(), device_complex_data.data(),
+             local_complex_size * sizeof(parafaft::CuFFTBackend::Complex), cudaMemcpyDeviceToHost);
 
   // Gather shape and start info from all ranks for reconstruction
   int nranks;
@@ -137,23 +188,33 @@ int main(int argc, char **argv)
       offset += sizes[r];
     }
 
-    // Save to file
-    std::ofstream outfile("r2c_transformed_gaussian_cufft.txt");
-    outfile << std::scientific << std::setprecision(15);
+    // Generate reference
+    auto fftw_reference = generate_fftw_r2c_reference(N0, N1, N2, center0, center1, center2, sigma);
+
+    // Compare element-wise
+    double max_error = 0.0;
+    int error_count = 0;
     for (int i = 0; i < complex_size; ++i) {
-      outfile << global_complex[i].real() << " " << global_complex[i].imag() << "\n";
+      double err = std::abs(global_complex[i] - fftw_reference[i]);
+      max_error = std::max(max_error, err);
+      if (err > 1e-10) {
+        if (error_count < 5) {
+          std::cout << "Error at index " << i << ": parallel=" << global_complex[i]
+                    << " reference=" << fftw_reference[i] << " diff=" << err << "\n";
+        }
+        error_count++;
+      }
     }
-    outfile.close();
 
-    std::cout << "Saved transformed data to r2c_transformed_gaussian_cufft.txt\n";
-    std::cout << "DC component: " << global_complex[0] << "\n";
+    std::cout << "\nDC component (parallel cuFFT): " << global_complex[0] << "\n";
+    std::cout << "DC component (reference): " << fftw_reference[0] << "\n";
+    std::cout << "Maximum error: " << std::scientific << max_error << "\n";
 
-    // Basic sanity check: DC component should be positive real for a Gaussian
-    if (global_complex[0].real() > 0 && std::abs(global_complex[0].imag()) < 1e-10) {
-      std::cout << "PASSED: DC component is positive real\n";
+    if (max_error < 1e-10) {
+      std::cout << "PASSED\n";
       test_passed = 1;
     } else {
-      std::cout << "FAILED: DC component check failed\n";
+      std::cout << "FAILED (error count: " << error_count << ")\n";
       test_passed = 0;
     }
   }

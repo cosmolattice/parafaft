@@ -132,7 +132,7 @@ set_target_properties(test_mpi_r2c_padded_gaussian PROPERTIES
 if(CUDA)
     # C2C cuFFT MPI Tests
     add_executable(test_mpi_constant_32_cufft c2c/test_mpi_constant_32_cufft.cu)
-    target_link_libraries(test_mpi_constant_32_cufft ${MPI_LIBRARIES} CUDA::cufft_static ${CMAKE_DL_LIBS})
+    target_link_libraries(test_mpi_constant_32_cufft ${MPI_LIBRARIES} CUDA::cufft_static)
     target_compile_options(test_mpi_constant_32_cufft PRIVATE ${MPI_COMPILE_FLAGS})
     set_target_properties(test_mpi_constant_32_cufft PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c2c
@@ -140,7 +140,7 @@ if(CUDA)
     )
 
     add_executable(test_mpi_gaussian_roundtrip_cufft c2c/test_mpi_gaussian_roundtrip_cufft.cu)
-    target_link_libraries(test_mpi_gaussian_roundtrip_cufft ${MPI_LIBRARIES} CUDA::cufft_static ${CMAKE_DL_LIBS})
+    target_link_libraries(test_mpi_gaussian_roundtrip_cufft ${MPI_LIBRARIES} CUDA::cufft_static ${FFTW3_LIBRARIES})
     target_compile_options(test_mpi_gaussian_roundtrip_cufft PRIVATE ${MPI_COMPILE_FLAGS})
     set_target_properties(test_mpi_gaussian_roundtrip_cufft PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c2c
@@ -148,7 +148,7 @@ if(CUDA)
     )
 
     add_executable(test_8cubed_cufft c2c/test_8cubed_cufft.cu)
-    target_link_libraries(test_8cubed_cufft ${MPI_LIBRARIES} CUDA::cufft_static ${CMAKE_DL_LIBS})
+    target_link_libraries(test_8cubed_cufft ${MPI_LIBRARIES} CUDA::cufft_static ${FFTW3_LIBRARIES})
     target_compile_options(test_8cubed_cufft PRIVATE ${MPI_COMPILE_FLAGS})
     set_target_properties(test_8cubed_cufft PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c2c
@@ -156,7 +156,7 @@ if(CUDA)
     )
 
     add_executable(test_4d_roundtrip_cufft c2c/test_4d_roundtrip_cufft.cu)
-    target_link_libraries(test_4d_roundtrip_cufft ${MPI_LIBRARIES} CUDA::cufft_static ${CMAKE_DL_LIBS})
+    target_link_libraries(test_4d_roundtrip_cufft ${MPI_LIBRARIES} CUDA::cufft_static ${FFTW3_LIBRARIES})
     target_compile_options(test_4d_roundtrip_cufft PRIVATE ${MPI_COMPILE_FLAGS})
     set_target_properties(test_4d_roundtrip_cufft PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c2c
@@ -165,8 +165,7 @@ if(CUDA)
 
     # R2C cuFFT MPI Tests
     add_executable(test_mpi_r2c_roundtrip_cufft r2c/test_mpi_r2c_roundtrip_cufft.cu)
-    target_link_libraries(test_mpi_r2c_roundtrip_cufft ${MPI_LIBRARIES} ${FFTW3_LIBRARIES} ${CUDA_LIBRARIES} CUDA::cufft_static 
-    ${CMAKE_DL_LIBS})
+    target_link_libraries(test_mpi_r2c_roundtrip_cufft ${MPI_LIBRARIES} ${FFTW3_LIBRARIES} ${CUDA_LIBRARIES} CUDA::cufft_static ${FFTW3_LIBRARIES})
     target_compile_options(test_mpi_r2c_roundtrip_cufft PRIVATE ${MPI_COMPILE_FLAGS})
     set_target_properties(test_mpi_r2c_roundtrip_cufft PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/r2c
@@ -174,7 +173,7 @@ if(CUDA)
     )
 
     add_executable(test_mpi_r2c_gaussian_cufft r2c/test_mpi_r2c_gaussian_cufft.cu)
-    target_link_libraries(test_mpi_r2c_gaussian_cufft ${MPI_LIBRARIES} CUDA::cufft_static ${CMAKE_DL_LIBS})
+    target_link_libraries(test_mpi_r2c_gaussian_cufft ${MPI_LIBRARIES} CUDA::cufft_static ${FFTW3_LIBRARIES})
     target_compile_options(test_mpi_r2c_gaussian_cufft PRIVATE ${MPI_COMPILE_FLAGS})
     set_target_properties(test_mpi_r2c_gaussian_cufft PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/r2c
@@ -182,7 +181,7 @@ if(CUDA)
     )
 
     add_executable(test_mpi_r2c_padded_roundtrip_cufft r2c/test_mpi_r2c_padded_roundtrip_cufft.cu)
-    target_link_libraries(test_mpi_r2c_padded_roundtrip_cufft ${MPI_LIBRARIES} CUDA::cufft_static ${CMAKE_DL_LIBS})
+    target_link_libraries(test_mpi_r2c_padded_roundtrip_cufft ${MPI_LIBRARIES} CUDA::cufft_static ${FFTW3_LIBRARIES})
     target_compile_options(test_mpi_r2c_padded_roundtrip_cufft PRIVATE ${MPI_COMPILE_FLAGS})
     set_target_properties(test_mpi_r2c_padded_roundtrip_cufft PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/r2c
@@ -190,7 +189,7 @@ if(CUDA)
     )
 
     add_executable(test_mpi_r2c_padded_gaussian_cufft r2c/test_mpi_r2c_padded_gaussian_cufft.cu)
-    target_link_libraries(test_mpi_r2c_padded_gaussian_cufft ${MPI_LIBRARIES} CUDA::cufft_static ${CMAKE_DL_LIBS})
+    target_link_libraries(test_mpi_r2c_padded_gaussian_cufft ${MPI_LIBRARIES} CUDA::cufft_static)
     target_compile_options(test_mpi_r2c_padded_gaussian_cufft PRIVATE ${MPI_COMPILE_FLAGS})
     set_target_properties(test_mpi_r2c_padded_gaussian_cufft PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/r2c
@@ -199,8 +198,7 @@ if(CUDA)
 
     # Unit Tests (cuFFT Backend)
     add_executable(test_cufft_backend_r2c unit/test_cufft_backend_r2c.cu)
-    target_link_libraries(test_cufft_backend_r2c ${MPI_LIBRARIES} ${FFTW3_LIBRARIES} ${CUDA_LIBRARIES} CUDA::cufft_static
-    ${CMAKE_DL_LIBS})
+    target_link_libraries(test_cufft_backend_r2c ${MPI_LIBRARIES} ${FFTW3_LIBRARIES} ${CUDA_LIBRARIES} CUDA::cufft_static)
     target_compile_options(test_cufft_backend_r2c PRIVATE ${MPI_COMPILE_FLAGS})
     set_target_properties(test_cufft_backend_r2c PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/unit
@@ -208,7 +206,7 @@ if(CUDA)
     )
 
     add_executable(test_cufft_backend_c2c unit/test_cufft_backend_c2c.cu)
-    target_link_libraries(test_cufft_backend_c2c ${MPI_LIBRARIES} CUDA::cufft_static ${CMAKE_DL_LIBS})
+    target_link_libraries(test_cufft_backend_c2c ${MPI_LIBRARIES} CUDA::cufft_static)
     target_compile_options(test_cufft_backend_c2c PRIVATE ${MPI_COMPILE_FLAGS})
     set_target_properties(test_cufft_backend_c2c PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/unit
@@ -216,7 +214,7 @@ if(CUDA)
     )
 
     add_executable(test_cuvector unit/test_cuvector.cu)
-    target_link_libraries(test_cuvector CUDA::cudart ${CMAKE_DL_LIBS})
+    target_link_libraries(test_cuvector CUDA::cudart)
     set_target_properties(test_cuvector PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/unit
         CUDA_SEPARABLE_COMPILATION ON
