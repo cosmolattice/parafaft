@@ -198,11 +198,11 @@ if(CUDA)
     )
 
     # Unit Tests (cuFFT Backend)
-    add_executable(test_cufft_backend unit/test_cufft_backend_r2c.cu)
-    target_link_libraries(test_cufft_backend ${MPI_LIBRARIES} ${FFTW3_LIBRARIES} ${CUDA_LIBRARIES} CUDA::cufft_static 
+    add_executable(test_cufft_backend_r2c unit/test_cufft_backend_r2c.cu)
+    target_link_libraries(test_cufft_backend_r2c ${MPI_LIBRARIES} ${FFTW3_LIBRARIES} ${CUDA_LIBRARIES} CUDA::cufft_static
     ${CMAKE_DL_LIBS})
-    target_compile_options(test_cufft_backend PRIVATE ${MPI_COMPILE_FLAGS})
-    set_target_properties(test_cufft_backend PROPERTIES
+    target_compile_options(test_cufft_backend_r2c PRIVATE ${MPI_COMPILE_FLAGS})
+    set_target_properties(test_cufft_backend_r2c PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/unit
         CUDA_SEPARABLE_COMPILATION ON
     )
