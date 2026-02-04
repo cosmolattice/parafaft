@@ -88,6 +88,7 @@ endif()
 if(PARAFAFT_HIP AND CMAKE_HIP_COMPILER)
     target_link_libraries(parafaft INTERFACE
         hip::hipfft
+        hip::host
     )
     target_compile_definitions(parafaft INTERFACE PARAFAFT_HIP_ENABLED)
 endif()

@@ -70,6 +70,10 @@ set_target_properties(test_fftw_backend PROPERTIES
 # ##############################################################################
 
 if(PARAFAFT_CUDA)
+    if(NOT CMAKE_CUDA_ARCHITECTURES)
+        set(CMAKE_CUDA_ARCHITECTURES "native")
+    endif()
+
     # C2C MPI Tests
     add_executable(test_cufft_mpi_c2c_gaussian c2c/test_cufft_mpi_c2c_gaussian.cu)
     target_link_libraries(test_cufft_mpi_c2c_gaussian parafaft::parafaft)
@@ -100,6 +104,45 @@ if(PARAFAFT_CUDA)
     add_executable(test_cufft_backend unit/test_cufft_backend.cu)
     target_link_libraries(test_cufft_backend parafaft::parafaft)
     set_target_properties(test_cufft_backend PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/unit
+    )
+endif()
+
+# ##############################################################################
+# hipFFT Backend Tests
+# ##############################################################################
+
+if(PARAFAFT_HIP)
+    # C2C MPI Tests
+    add_executable(test_hipfft_mpi_c2c_gaussian c2c/test_hipfft_mpi_c2c_gaussian.hip)
+    target_link_libraries(test_hipfft_mpi_c2c_gaussian parafaft::parafaft)
+    set_target_properties(test_hipfft_mpi_c2c_gaussian PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c2c
+    )
+
+    # R2C MPI Tests
+    add_executable(test_hipfft_mpi_r2c_padded_gaussian r2c/test_hipfft_mpi_r2c_padded_gaussian.hip)
+    target_link_libraries(test_hipfft_mpi_r2c_padded_gaussian parafaft::parafaft)
+    set_target_properties(test_hipfft_mpi_r2c_padded_gaussian PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/r2c
+    )
+
+    add_executable(test_hipfft_mpi_r2c_gaussian r2c/test_hipfft_mpi_r2c_gaussian.hip)
+    target_link_libraries(test_hipfft_mpi_r2c_gaussian parafaft::parafaft)
+    set_target_properties(test_hipfft_mpi_r2c_gaussian PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/r2c
+    )
+
+    # Unit Tests (hipFFT Backend)
+    add_executable(test_hipvector unit/test_hipvector.hip)
+    target_link_libraries(test_hipvector hip::host)
+    set_target_properties(test_hipvector PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/unit
+    )
+
+    add_executable(test_hipfft_backend unit/test_hipfft_backend.hip)
+    target_link_libraries(test_hipfft_backend parafaft::parafaft)
+    set_target_properties(test_hipfft_backend PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/unit
     )
 endif()
@@ -216,4 +259,15 @@ if(PARAFAFT_CUDA)
 
     add_mpi_tests_varN(cufft_r2c_gaussian r2c/test_cufft_mpi_r2c_gaussian test_cufft_mpi_r2c_gaussian)
     add_mpi_tests_varN(cufft_r2c_padded_gaussian r2c/test_cufft_mpi_r2c_padded_gaussian test_cufft_mpi_r2c_padded_gaussian)
+endif()
+
+# hipFFT tests (only added if HIP is enabled)
+if(PARAFAFT_HIP)
+    add_serial_tests(hipfft_unit_backend unit/test_hipfft_backend test_hipfft_backend)
+    add_serial_tests(hipfft_unit_hipvector unit/test_hipvector test_hipvector)
+
+    add_mpi_tests_varN(hipfft_c2c_gaussian c2c/test_hipfft_mpi_c2c_gaussian test_hipfft_mpi_c2c_gaussian)
+
+    add_mpi_tests_varN(hipfft_r2c_gaussian r2c/test_hipfft_mpi_r2c_gaussian test_hipfft_mpi_r2c_gaussian)
+    add_mpi_tests_varN(hipfft_r2c_padded_gaussian r2c/test_hipfft_mpi_r2c_padded_gaussian test_hipfft_mpi_r2c_padded_gaussian)
 endif()
