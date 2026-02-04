@@ -363,9 +363,9 @@ void test_resize()
 
 int main()
 {
-  std::cout << "========================================" << std::endl;
-  std::cout << "cuvector Unit Tests" << std::endl;
-  std::cout << "========================================" << std::endl;
+  std::cout << "########################################" << std::endl;
+  std::cout << "# TEST: unit/cuvector" << std::endl;
+  std::cout << "########################################" << std::endl;
 
   // Check for CUDA device
   int device_count = 0;

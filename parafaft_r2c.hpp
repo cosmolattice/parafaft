@@ -99,6 +99,23 @@ namespace parafaft
       r2c_decompose(sizes[axis], nparts, p, n, s);
       subsizes[axis] = n;
       substarts[axis] = s;
+      std::cout << "Creating subarray with ";
+      for (int i = 0; i < ndims; i++) {
+        std::cout << subsizes[i] << (i == ndims - 1 ? "" : "x");
+      }
+      std::cout << ", i.e. total size ";
+      ;
+      int total_size = 1;
+      for (int i = 0; i < ndims; i++) {
+        total_size *= subsizes[i];
+      }
+      std::cout << total_size;
+      std::cout << ", starting at ";
+      for (int i = 0; i < ndims; i++) {
+        std::cout << substarts[i] << (i == ndims - 1 ? "" : "x");
+      }
+      std::cout << " for part " << p << std::endl;
+
       MPI_Type_create_subarray(ndims, sizes, subsizes.data(), substarts.data(), MPI_ORDER_C, datatype, &subarrays[p]);
       MPI_Type_commit(&subarrays[p]);
     }
@@ -117,8 +134,12 @@ namespace parafaft
 
     std::vector<int> counts(nparts, 1), displs(nparts, 0);
 
-    MPI_Alltoallw(arrayA, counts.data(), displs.data(), subarraysA.data(), arrayB, counts.data(), displs.data(),
-                  subarraysB.data(), comm);
+    MPI_Barrier(comm);
+
+    // MPI_Alltoallw(arrayA, counts.data(), displs.data(), subarraysA.data(), arrayB, counts.data(), displs.data(),
+    //               subarraysB.data(), comm);
+
+    MPI_Barrier(comm);
 
     for (int p = 0; p < nparts; p++) {
       MPI_Type_free(&subarraysA[p]);
@@ -138,7 +159,6 @@ namespace parafaft
     // ========================================================================
     ParaFaFT_R2C(const int global_shape[D], MPI_Comm comm = MPI_COMM_WORLD) : comm_world_(comm), backend_(D)
     {
-
       MPI_Comm_rank(comm_world_, &rank_);
       MPI_Comm_size(comm_world_, &size_);
 
@@ -221,17 +241,13 @@ namespace parafaft
     // ========================================================================
     void forward(const double *real_input, Complex *complex_output)
     {
-      // Allocate temporary padded buffer
-      Buffer padded_buffer(get_local_in_place_buffer_size());
+      std::cout << "Rank " << rank_ << ": Padding real input data" << std::endl;
+      // Pad the data and move it into the destination buffer
+      copy_real_to_padded(real_input, reinterpret_cast<double *>(complex_output));
 
-      // Copy real input into padded buffer
-      copy_real_to_padded(real_input, padded_buffer.data());
-
+      std::cout << "Rank " << rank_ << ": Starting forward_in_place()" << std::endl;
       // In-place forward transform
-      forward_in_place(padded_buffer.data());
-
-      // Copy complex result from padded buffer to output
-      backend_.memcpy(complex_output, padded_buffer.data(), get_local_complex_size() * sizeof(Complex));
+      forward_in_place(reinterpret_cast<double *>(complex_output));
     }
 
     // ========================================================================
@@ -308,17 +324,11 @@ namespace parafaft
     // ========================================================================
     void backward(const Complex *complex_input, double *real_output)
     {
-      // Allocate temporary padded buffer
-      std::vector<double> padded_buffer(get_local_in_place_buffer_size());
-
-      // Copy complex input into padded buffer
-      backend_.memcpy(padded_buffer.data(), complex_input, get_local_complex_size() * sizeof(Complex));
-
       // In-place backward transform
-      backward_in_place(padded_buffer.data());
+      backward_in_place(reinterpret_cast<double *>(complex_input));
 
       // Copy real output from padded buffer
-      copy_padded_to_real(padded_buffer.data(), real_output);
+      copy_padded_to_real(reinterpret_cast<double *>(complex_input), real_output);
     }
 
     // ========================================================================
@@ -395,7 +405,7 @@ namespace parafaft
     }
 
     // Query function for in-place buffer size
-    // Returns: local_n[0] × ... × local_n[D-2] × 2×(N/2+2) doubles
+    // Returns: local_n[0] × ... × local_n[D-2] × 2×(N/2+1) doubles
     // This equals stage 0 complex output size when interpreted as double
     int get_local_in_place_buffer_size() const
     {
@@ -403,7 +413,8 @@ namespace parafaft
       for (int i = 0; i < D - 1; ++i) {
         size *= stage_shapes_[0][i]; // batch dimensions (multiplied by 2)
       }
-      size *= 2 * (global_real_shape_[D - 1] / 2 + 2); // padded last dimension (2 doubles per complex)
+      size *= 2 * (global_real_shape_[D - 1] / 2 + 1) + 2; // padded last dimension (2 doubles per complex)
+      // TODO: WHY IS THERE A +2 HERE??? If we remove it, we segfault at the MPI exchange step in forward_in_place!
       return size;
     }
 

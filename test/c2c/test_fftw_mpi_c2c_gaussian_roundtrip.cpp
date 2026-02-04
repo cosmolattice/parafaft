@@ -1,6 +1,4 @@
-// cuFFT version of test_mpi_gaussian_roundtrip.cpp
 #include "../../parafaft_generic.hpp"
-#include "../../backend/cufft/fft_backend_cufft.hpp"
 #include <iostream>
 #include <iomanip>
 #include <fstream>
@@ -9,15 +7,24 @@
 
 int main(int argc, char **argv)
 {
+  std::cout << "########################################" << std::endl;
+  std::cout << "# TEST: c2c/fftw_mpi_c2c_gaussian_roundtrip" << std::endl;
+  std::cout << "########################################" << std::endl;
+
   MPI_Init(&argc, &argv);
 
   int rank;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
+  int N = 32; // Default
+  if (argc > 1) {
+    N = std::atoi(argv[1]);
+  }
+
   // Same parameters as serial reference
-  const int N0 = 32;
-  const int N1 = 32;
-  const int N2 = 32;
+  const int N0 = N;
+  const int N1 = N;
+  const int N2 = N;
   int global_shape[3] = {N0, N1, N2};
   const int total_size = N0 * N1 * N2;
 
@@ -27,8 +34,8 @@ int main(int argc, char **argv)
   const double center2 = N2 / 2.0;
   const double sigma = 4.0;
 
-  // Create FFT object with cuFFT backend
-  parafaft::ParaFaFT<3, parafaft::CuFFTBackend> fft(global_shape);
+  // Create FFT object
+  parafaft::ParaFaFT<3> fft(global_shape);
 
   // Get local dimensions
   int local_size = fft.get_local_size();
@@ -66,23 +73,15 @@ int main(int argc, char **argv)
 
   if (rank == 0) {
     std::cout << "Initial data[0] = " << data[0] << "\n";
-    std::cout << "Performing forward FFT (cuFFT backend)...\n";
+    std::cout << "Performing forward FFT...\n";
   }
 
-  // copy the data to device
-  std::complex<double> *d_data = nullptr;
-  cudaMalloc((void **)&d_data, local_size * sizeof(std::complex<double>));
-  cudaMemcpy((void *)d_data, data.data(), local_size * sizeof(std::complex<double>), cudaMemcpyHostToDevice);
-
   // Forward FFT
-  fft.forward(d_data);
+  fft.forward(data.data());
 
   if (rank == 0) {
     std::cout << "After forward: data[0] = " << data[0] << "\n";
   }
-
-  // copy the data back to host
-  cudaMemcpy((void *)data.data(), d_data, local_size * sizeof(std::complex<double>), cudaMemcpyDeviceToHost);
 
   // Save transformed data - need to gather from all ranks
   // After forward FFT, data is in stage C distribution: [N0, n0, n1]
@@ -120,6 +119,7 @@ int main(int argc, char **argv)
   if (rank == 0) {
     gathered_data.resize(displs[nranks - 1] + sizes[nranks - 1]);
   }
+
   MPI_Gatherv(data.data(), final_size, MPI_C_DOUBLE_COMPLEX, gathered_data.data(), sizes.data(), displs.data(),
               MPI_C_DOUBLE_COMPLEX, 0, MPI_COMM_WORLD);
 
@@ -153,22 +153,19 @@ int main(int argc, char **argv)
     }
 
     // Save to file
-    std::ofstream outfile("gaussian_transformed_mpi_cufft.txt");
+    std::ofstream outfile("gaussian_transformed_mpi.txt");
     outfile << std::scientific << std::setprecision(15);
 
     for (int i = 0; i < total_size; ++i) {
       outfile << global_array[i].real() << " " << global_array[i].imag() << "\n";
     }
     outfile.close();
-    std::cout << "Saved transformed data to gaussian_transformed_mpi_cufft.txt\n";
+    std::cout << "Saved transformed data to gaussian_transformed_mpi.txt\n";
     std::cout << "Performing backward FFT...\n";
   }
 
   // Backward FFT
   fft.backward(data.data());
-
-  // copy the data back to host
-  cudaMemcpy((void *)data.data(), d_data, local_size * sizeof(std::complex<double>), cudaMemcpyDeviceToHost);
 
   if (rank == 0) {
     std::cout << "After backward (before norm): data[0] = " << data[0] << "\n";

@@ -1,17 +1,19 @@
-// cuFFT version of test_8cubed.cpp
 #include "../../parafaft_generic.hpp"
-#include "../../backend/cufft/fft_backend_cufft.hpp"
 #include <iostream>
 #include <cmath>
 
 int main(int argc, char **argv)
 {
+  std::cout << "########################################" << std::endl;
+  std::cout << "# TEST: c2c/fftw_mpi_8cubed" << std::endl;
+  std::cout << "########################################" << std::endl;
+
   MPI_Init(&argc, &argv);
   int rank;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
   int global_shape[3] = {8, 8, 8};
-  parafaft::ParaFaFT<3, parafaft::CuFFTBackend> fft(global_shape);
+  parafaft::ParaFaFT<3> fft(global_shape);
 
   int local_size = fft.get_local_size();
 
@@ -24,7 +26,7 @@ int main(int argc, char **argv)
   std::vector<std::complex<double>> original = data;
 
   if (rank == 0) {
-    std::cout << "Testing 8x8x8 with sequential values (cuFFT backend)\n";
+    std::cout << "Testing 8x8x8 with sequential values\n";
     std::cout << "Local size: " << local_size << "\n";
   }
 

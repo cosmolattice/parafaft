@@ -1,6 +1,4 @@
-// cuFFT version of test_mpi_r2c_padded_roundtrip.cpp
 #include "../../parafaft_r2c.hpp"
-#include "../../backend/cufft/fft_backend_cufft.hpp"
 #include <iostream>
 #include <iomanip>
 #include <cmath>
@@ -14,6 +12,12 @@ int main(int argc, char **argv)
   int rank, size;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+  if (rank == 0) {
+    std::cout << "########################################" << std::endl;
+    std::cout << "# TEST: r2c/fftw_mpi_r2c_padded_roundtrip" << std::endl;
+    std::cout << "########################################" << std::endl;
+  }
 
   // Test parameters
   int N = 32; // Default
@@ -31,8 +35,8 @@ int main(int argc, char **argv)
   const double center2 = N2 / 2.0;
   const double sigma = 4.0;
 
-  // Create R2C FFT object with cuFFT backend
-  parafaft::ParaFaFT_R2C<3, parafaft::CuFFTBackend> fft(global_shape);
+  // Create R2C FFT object
+  parafaft::ParaFaFT_R2C<3> fft(global_shape);
 
   // Get local dimensions
   int local_real_shape[3], real_start[3];
@@ -48,7 +52,6 @@ int main(int argc, char **argv)
 
   // Verify size relationship (key optimization assumption)
   if (rank == 0) {
-    std::cout << "=== cuFFT R2C Padded Roundtrip Test ===" << std::endl;
     std::cout << "local_real_size = " << local_real_size << "\n";
     std::cout << "local_padded_size = " << local_padded_size << " (doubles)\n";
     std::cout << "local_complex_size = " << local_complex_size << " (complex)\n";
@@ -88,8 +91,7 @@ int main(int argc, char **argv)
   }
 
   if (rank == 0) {
-    std::cout << "R2C Padded Roundtrip Test (cuFFT backend): " << N0 << "x" << N1 << "x" << N2 << " with " << size
-              << " processes\n";
+    std::cout << "R2C Padded Roundtrip Test: " << N0 << "x" << N1 << "x" << N2 << " with " << size << " processes\n";
   }
 
   // Forward R2C FFT (in-place: real → complex)
@@ -98,7 +100,7 @@ int main(int argc, char **argv)
   // Backward C2R FFT (in-place: complex → real)
   fft.backward_in_place(padded_buffer.data());
 
-  // Normalize (FFTW/cuFFT convention: forward*backward = N * original)
+  // Normalize (FFTW convention: forward*backward = N * original)
   double scale = 1.0 / total_real_size;
   for (int i = 0; i < local_padded_size; ++i) {
     padded_buffer[i] *= scale;
@@ -126,13 +128,16 @@ int main(int argc, char **argv)
   if (rank == 0) {
     std::cout << "Maximum roundtrip error: " << std::scientific << global_max_error << "\n";
 
+    std::cout << "================================\n";
+    std::cout << "SUMMARY: r2c/fftw_mpi_r2c_padded_roundtrip\n";
     if (global_max_error < 1e-10) {
-      std::cout << "PASSED\n";
+      std::cout << "    PASSED\n";
       test_passed = 1;
     } else {
-      std::cout << "FAILED\n";
+      std::cout << "    FAILED\n";
       test_passed = 0;
     }
+    std::cout << "================================" << std::endl;
   }
 
   // Broadcast result
