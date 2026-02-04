@@ -51,6 +51,20 @@ ctest
 ctest -V
 ```
 
+Alternatively, put it directly into you CMake project using `fetch_content`:
+
+```cmake
+include(FetchContent)
+FetchContent_Declare(
+  ParaFaFT
+  GIT_REPOSITORY https://github.com/aflorio2/parafaft.git
+  GIT_TAG        cuda
+  )
+FetchContent_MakeAvailable(ParaFaFT)
+
+target_link_libraries(your_target PRIVATE parafaft::parafaft)
+```
+
 ## Key Algorithm Details
 
 ### Global Redistribution Method
