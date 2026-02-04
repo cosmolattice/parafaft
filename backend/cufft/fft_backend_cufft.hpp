@@ -182,12 +182,15 @@ namespace parafaft
     )
     {
       // R2C: N real inputs -> N/2+1 complex outputs
-      // Use NULL for embed to let cuFFT infer layout from stride/dist (matches FFTW behavior)
+      // IMPORTANT: Unlike FFTW, cuFFT ignores stride/dist when inembed/onembed are NULL!
+      // We must explicitly set inembed/onembed to match FFTW behavior.
       int n[] = {length};
+      int inembed[] = {length};         // Real input embed = N
+      int onembed[] = {length / 2 + 1}; // Complex output embed = N/2+1
 
       // Note: output dist is half of input dist (complex elements vs doubles)
-      check_cufft(cufftPlanMany(&r2c_plan_, 1, n, NULL, stride, dist, // Real input layout
-                                NULL, stride, dist / 2,               // Complex output layout
+      check_cufft(cufftPlanMany(&r2c_plan_, 1, n, inembed, stride, dist, // Real input layout
+                                onembed, stride, dist / 2,               // Complex output layout
                                 CUFFT_D2Z, batch),
                   "cufftPlanMany R2C");
     }
@@ -217,11 +220,14 @@ namespace parafaft
     )
     {
       // C2R: N/2+1 complex inputs -> N real outputs
-      // Use NULL for embed to let cuFFT infer layout from stride/dist (matches FFTW behavior)
+      // IMPORTANT: Unlike FFTW, cuFFT ignores stride/dist when inembed/onembed are NULL!
+      // We must explicitly set inembed/onembed to match FFTW behavior.
       int n[] = {length};
+      int inembed[] = {length / 2 + 1}; // Complex input embed = N/2+1
+      int onembed[] = {length};         // Real output embed = N
 
-      check_cufft(cufftPlanMany(&c2r_plan_, 1, n, NULL, stride, dist / 2, // Complex input layout
-                                NULL, stride, dist,                       // Real output layout
+      check_cufft(cufftPlanMany(&c2r_plan_, 1, n, inembed, stride, dist / 2, // Complex input layout
+                                onembed, stride, dist,                       // Real output layout
                                 CUFFT_Z2D, batch),
                   "cufftPlanMany C2R");
     }
