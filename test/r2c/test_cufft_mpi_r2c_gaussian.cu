@@ -189,7 +189,7 @@ int compare_cuFFTBackend(const int N, int rank)
 
   // Allocate device memory for complex output
   parafaft::CuFFTBackend::Complex *d_result = nullptr;
-  cudaMalloc((void **)&d_result, local_complex_size * sizeof(parafaft::CuFFTBackend::Complex));
+  cudaMalloc((void **)&d_result, local_real_size / 2 * sizeof(parafaft::CuFFTBackend::Complex));
 
   // Perform forward FFT
   fft.forward(d_data, d_result);
