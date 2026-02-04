@@ -30,7 +30,10 @@ A C++ implementation of multidimensional parallel FFT using MPI, based on the al
   - `parafaft_pencil.hpp`: Specialized 3D and 4D C2C versions (legacy)
 - **MPI parallelization**: Distributes up to (D-1) dimensions across processor grids
 - **No local transposes**: Uses MPI subarray datatypes with `MPI_Alltoallw` to eliminate local data rearrangements
-- **FFTW3 backend**: Uses FFTW3 for efficient 1D FFT operations
+- **Multiple FFT backends**:
+  - **FFTW3**: CPU-based FFT operations (default)
+  - **cuFFT**: NVIDIA GPU acceleration via CUDA
+  - **hipFFT**: AMD GPU acceleration via ROCm/HIP
 - **User-friendly API**: Simple `ParaFaFT<D>` and `ParaFaFT_R2C<D>` template interfaces
 
 ## Quick Start
@@ -93,7 +96,10 @@ For R2C transforms, the last axis is reduced from N to N/2+1 in complex space du
 - FFTW3 library
 - C++14 compatible compiler
 - CMake 3.18+
-- CUDA Toolkit (optional, for GPU support)
+
+optional:
+- CUDA Toolkit (for NVIDIA GPU support)
+- ROCm/HIP with hipFFT(for AMD GPU support)
 
 ## Building with CMake
 
@@ -103,8 +109,11 @@ mkdir build && cd build
 cmake ..
 make
 
-# With CUDA support
+# With CUDA support (NVIDIA GPUs)
 cmake .. -DPARAFAFT_CUDA=ON
+
+# With HIP support (AMD GPUs)
+cmake .. -DPARAFAFT_HIP=ON
 
 # With tests
 cmake .. -DPARAFAFT_TEST=ON
@@ -112,16 +121,20 @@ cmake .. -DPARAFAFT_TEST=ON
 # Both CUDA and tests
 cmake .. -DPARAFAFT_CUDA=ON -DPARAFAFT_TEST=ON
 
+# Both HIP and tests
+cmake .. -DPARAFAFT_HIP=ON -DPARAFAFT_TEST=ON
+
 # Install the library
 cmake --install . --prefix /your/install/path
 ```
 
 ### CMake Options
 
-| Option          | Default | Description                       |
-| --------------- | ------- | --------------------------------- |
-| `PARAFAFT_CUDA` | `OFF`   | Enable CUDA/cuFFT backend support |
-| `PARAFAFT_TEST` | `OFF`   | Build the test suite              |
+| Option          | Default | Description                            |
+| --------------- | ------- | -------------------------------------- |
+| `PARAFAFT_CUDA` | `OFF`   | Enable CUDA/cuFFT backend (NVIDIA GPU) |
+| `PARAFAFT_HIP`  | `OFF`   | Enable HIP/hipFFT backend (AMD GPU)    |
+| `PARAFAFT_TEST` | `OFF`   | Build the test suite                   |
 
 ### Using in Your CMake Project
 
@@ -152,6 +165,20 @@ mpirun -n 8 ./examples/example_4d_pencil
 cd build
 ctest
 ```
+
+Note that if you have both CUDA and HIP/ROCm installed, it may be necessary to specify the accelerator backend for MPI. For OpenMPI, one can either use 
+```bash
+OMPI_MCA_accelerator="rocm" mpirun -n 4 ./your_executable
+```
+or
+```bash
+mpirun --mca accelerator rocm -n 4 ./your_executable
+```
+To enable the rocm accelerator in the entire current session, one can also simply set
+```bash
+export OMPI_MCA_accelerator="rocm"
+```
+The corresponding environment variable for CUDA is `cuda`.
 
 ## Usage Examples
 
@@ -291,11 +318,27 @@ R2C/C2R transforms for real-valued input data:
 
 **Memory advantage**: Stores only N/2+1 complex values on the last axis instead of N.
 
-#### `fft_backend_fftw.hpp`
-FFTW3 backend abstraction:
+#### FFT Backends
+
+##### `fft_backend_fftw.hpp` (CPU)
+FFTW3 backend for CPU-based operations:
 - Manages FFTW plans for C2C, R2C, and C2R transforms
 - Handles batched 1D FFTs with arbitrary strides
 - Automatic plan cleanup via RAII
+
+##### `fft_backend_cufft.hpp` (NVIDIA GPU)
+cuFFT backend for NVIDIA GPU acceleration:
+- Requires CUDA Toolkit and cuFFT library
+- Includes `cuvector<T>` device memory wrapper
+- Supports C2C, R2C, and C2R in-place transforms
+- Enable with `-DPARAFAFT_CUDA=ON`
+
+##### `fft_backend_hipfft.hpp` (AMD GPU)
+hipFFT backend for AMD GPU acceleration:
+- Requires ROCm and hipFFT library
+- Includes `hipvector<T>` device memory wrapper
+- Supports C2C, R2C, and C2R in-place transforms
+- Enable with `-DPARAFAFT_HIP=ON`
 
 #### `parafaft_pencil.hpp` (Legacy)
 Specialized implementations for 3D and 4D C2C transforms:

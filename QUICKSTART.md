@@ -26,19 +26,26 @@ make
 # With CUDA support
 cmake .. -DPARAFAFT_CUDA=ON
 
+# With HIP support (AMD GPUs)
+cmake .. -DPARAFAFT_HIP=ON
+
 # With tests
 cmake .. -DPARAFAFT_TEST=ON
 
 # Both CUDA and tests
 cmake .. -DPARAFAFT_CUDA=ON -DPARAFAFT_TEST=ON
+
+# Both HIP and tests
+cmake .. -DPARAFAFT_HIP=ON -DPARAFAFT_TEST=ON
 ```
 
 ### CMake Options
 
-| Option          | Default | Description               |
-| --------------- | ------- | ------------------------- |
-| `PARAFAFT_CUDA` | `OFF`   | Enable CUDA/cuFFT backend |
-| `PARAFAFT_TEST` | `OFF`   | Build the test suite      |
+| Option          | Default | Description                     |
+| --------------- | ------- | ------------------------------- |
+| `PARAFAFT_CUDA` | `OFF`   | Enable CUDA/cuFFT backend       |
+| `PARAFAFT_HIP`  | `OFF`   | Enable HIP/hipFFT backend (AMD) |
+| `PARAFAFT_TEST` | `OFF`   | Build the test suite            |
 
 ### Using in Your CMake Project
 
@@ -159,16 +166,17 @@ MPI_Finalize(); // Now safe
 
 ## File Overview
 
-| File                                  | Description                       |
-| ------------------------------------- | --------------------------------- |
-| `CMakeLists.txt`                      | CMake build configuration         |
-| `parafaft_generic.hpp`                | Dimension-agnostic C2C transforms |
-| `parafaft_r2c.hpp`                    | R2C/C2R transforms for real data  |
-| `backend/fft_backend.hpp`             | Backend interface                 |
-| `backend/fftw3/fft_backend_fftw.hpp`  | FFTW backend implementation       |
-| `backend/cufft/fft_backend_cufft.hpp` | cuFFT backend implementation      |
-| `test/`                               | Comprehensive test suite          |
-| `test/README.md`                      | Detailed test documentation       |
+| File                                    | Description                               |
+| --------------------------------------- | ----------------------------------------- |
+| `CMakeLists.txt`                        | CMake build configuration                 |
+| `parafaft_generic.hpp`                  | Dimension-agnostic C2C transforms         |
+| `parafaft_r2c.hpp`                      | R2C/C2R transforms for real data          |
+| `backend/fft_backend.hpp`               | Backend interface                         |
+| `backend/fftw3/fft_backend_fftw.hpp`    | FFTW backend implementation (CPU)         |
+| `backend/cufft/fft_backend_cufft.hpp`   | cuFFT backend implementation (NVIDIA GPU) |
+| `backend/hipfft/fft_backend_hipfft.hpp` | hipFFT backend implementation (AMD GPU)   |
+| `test/`                                 | Comprehensive test suite                  |
+| `test/README.md`                        | Detailed test documentation               |
 
 ## Documentation
 
