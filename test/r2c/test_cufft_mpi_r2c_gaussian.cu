@@ -160,7 +160,7 @@ int compare_cuFFTBackend(const int N, int rank)
   fft.get_local_complex_shape(local_complex_shape);
   fft.get_complex_global_start(complex_start);
 
-  int local_real_size = fft.get_local_in_place_buffer_size();
+  int local_real_size = fft.get_required_output_size();
   int local_complex_size = fft.get_local_complex_size();
 
   std::cout << "Local real shape on rank " << rank << ": " << local_real_shape[0] << " x " << local_real_shape[1]

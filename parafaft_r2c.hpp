@@ -24,7 +24,7 @@
 // on a single buffer. The buffer is reinterpreted between real and
 // complex views:
 //
-//   double* buffer = fftw_alloc_real(fft.get_local_in_place_buffer_size());
+//   double* buffer = fftw_alloc_real(fft.get_required_output_size());
 //
 //   // Initialize real data (first N elements per row)
 //   // ...
@@ -71,12 +71,22 @@
 
 namespace parafaft
 {
-
   // ============================================================================
-  // Utility Functions (shared with parafaft_generic.hpp)
+  // Utility Functions
   // ============================================================================
 
-  // Balanced block-contiguous decomposition using Barry Smith's formula
+  /**
+   * @brief Balanced block-contiguous decomposition using Barry Smith's formula.
+   *
+   * Distributes N elements across M processors ensuring load balance:
+   * processors either get q or q+1 elements where q = N/M.
+   *
+   * @param N Total number of elements to distribute
+   * @param M Number of processors
+   * @param p Processor rank (0 <= p < M)
+   * @param[out] n Number of elements assigned to processor p
+   * @param[out] s Starting index for processor p in global array
+   */
   inline void r2c_decompose(int N, int M, int p, int &n, int &s)
   {
     int q = N / M;
@@ -85,7 +95,20 @@ namespace parafaft
     s = (r > p) ? (n * p) : (q * p + r);
   }
 
-  // Create MPI subarray datatypes for partitioning along an axis
+  /**
+   * @brief Create MPI subarray datatypes for partitioning along an axis.
+   *
+   * Creates MPI subarray datatypes that describe how to partition a D-dimensional
+   * array along a specific axis. This is key to avoiding local transposes by letting
+   * MPI handle the complex index mapping during redistribution.
+   *
+   * @param datatype Base MPI datatype (e.g., MPI_C_DOUBLE_COMPLEX)
+   * @param ndims Number of dimensions
+   * @param sizes Size of the array in each dimension
+   * @param axis Axis along which to partition
+   * @param nparts Number of partitions (typically number of processors)
+   * @param[out] subarrays Array of nparts MPI datatypes (must be pre-allocated)
+   */
   inline void r2c_subarray(MPI_Datatype datatype, int ndims, const int sizes[], int axis, int nparts,
                            MPI_Datatype subarrays[])
   {
@@ -99,29 +122,28 @@ namespace parafaft
       r2c_decompose(sizes[axis], nparts, p, n, s);
       subsizes[axis] = n;
       substarts[axis] = s;
-      std::cout << "Creating subarray with ";
-      for (int i = 0; i < ndims; i++) {
-        std::cout << subsizes[i] << (i == ndims - 1 ? "" : "x");
-      }
-      std::cout << ", i.e. total size ";
-      ;
-      int total_size = 1;
-      for (int i = 0; i < ndims; i++) {
-        total_size *= subsizes[i];
-      }
-      std::cout << total_size;
-      std::cout << ", starting at ";
-      for (int i = 0; i < ndims; i++) {
-        std::cout << substarts[i] << (i == ndims - 1 ? "" : "x");
-      }
-      std::cout << " for part " << p << std::endl;
 
       MPI_Type_create_subarray(ndims, sizes, subsizes.data(), substarts.data(), MPI_ORDER_C, datatype, &subarrays[p]);
       MPI_Type_commit(&subarrays[p]);
     }
   }
 
-  // Global data redistribution using MPI_Alltoallw
+  /**
+   * @brief Global data redistribution using MPI_Alltoallw.
+   *
+   * Redistributes data between two pencil decomposition stages, changing which
+   * axis is local vs distributed without any local transposes.
+   *
+   * @param comm MPI subcommunicator for the redistribution
+   * @param datatype Base MPI datatype
+   * @param ndims Number of dimensions
+   * @param sizesA Array dimensions before redistribution
+   * @param arrayA Input array (distributed along axisA)
+   * @param axisA Axis that is distributed in the input
+   * @param sizesB Array dimensions after redistribution
+   * @param[out] arrayB Output array (will be distributed along axisB)
+   * @param axisB Axis that will be distributed in the output
+   */
   inline void r2c_exchange(MPI_Comm comm, MPI_Datatype datatype, int ndims, const int sizesA[], void *arrayA, int axisA,
                            const int sizesB[], void *arrayB, int axisB)
   {
@@ -136,8 +158,8 @@ namespace parafaft
 
     MPI_Barrier(comm);
 
-    // MPI_Alltoallw(arrayA, counts.data(), displs.data(), subarraysA.data(), arrayB, counts.data(), displs.data(),
-    //               subarraysB.data(), comm);
+    MPI_Alltoallw(arrayA, counts.data(), displs.data(), subarraysA.data(), arrayB, counts.data(), displs.data(),
+                  subarraysB.data(), comm);
 
     MPI_Barrier(comm);
 
@@ -147,6 +169,26 @@ namespace parafaft
     }
   }
 
+  // ============================================================================
+  // ParaFaFT_R2C Class
+  // ============================================================================
+
+  /**
+   * @brief Parallel Real-to-Complex (R2C) and Complex-to-Real (C2R) FFT using pencil decomposition.
+   *
+   * This class implements distributed-memory parallel FFT for real-valued data using
+   * MPI pencil decomposition. It supports arbitrary dimensions D and provides both
+   * out-of-place and in-place transform interfaces.
+   *
+   * Key features:
+   * - Forward R2C: real input → complex output with reduced last dimension (N/2+1)
+   * - Backward C2R: complex input → real output (inverse of forward)
+   * - In-place variants that operate on a single buffer
+   * - Ping-pong buffering with minimal memory overhead
+   *
+   * @tparam D Number of dimensions (must be >= 2)
+   * @tparam Backend FFT backend type (default: FFTWBackend)
+   */
   template <int D, typename Backend = FFTWBackend> class ParaFaFT_R2C
   {
   public:
@@ -154,9 +196,15 @@ namespace parafaft
     using Buffer = typename Backend::Buffer;
     using ComplexBuffer = typename Backend::ComplexBuffer;
 
-    // ========================================================================
-    // Constructor: Setup Processor Grid and Pencil Decomposition for R2C
-    // ========================================================================
+    /**
+     * @brief Construct a parallel R2C FFT object.
+     *
+     * Sets up the processor grid, pencil decomposition, and creates FFT plans
+     * for all stages of the transform.
+     *
+     * @param global_shape Array of D integers specifying the global real array dimensions
+     * @param comm MPI communicator (default: MPI_COMM_WORLD)
+     */
     ParaFaFT_R2C(const int global_shape[D], MPI_Comm comm = MPI_COMM_WORLD) : comm_world_(comm), backend_(D)
     {
       MPI_Comm_rank(comm_world_, &rank_);
@@ -215,6 +263,9 @@ namespace parafaft
       create_backend_plans();
     }
 
+    /**
+     * @brief Destructor. Frees MPI communicators if MPI is not finalized.
+     */
     ~ParaFaFT_R2C()
     {
       int finalized;
@@ -231,14 +282,23 @@ namespace parafaft
       }
     }
 
-    // ========================================================================
-    // Forward R2C Transform
-    //
-    // @param real_input   Input real array (not modified; user retains ownership)
-    // @param complex_output  Output complex array (will contain Fourier coefficients)
-    //
-    // Implementation: Delegates to forward_padded() for the actual computation.
-    // ========================================================================
+    /**
+     * @brief Forward R2C transform (out-of-place).
+     *
+     * Computes the forward Real-to-Complex FFT, transforming real-space data
+     * to Fourier-space complex coefficients.
+     *
+     * @param real_input Input real array of size get_local_real_size().
+     *                   Not modified; user retains ownership.
+     * @param complex_output Output complex array. Must be at least
+     *                       get_required_output_size()/2 complex elements
+     *                       to accommodate intermediate MPI redistributions.
+     *                       Final result uses only get_local_complex_size() elements.
+     *
+     * @note The output buffer is used as working space during the transform.
+     *       Intermediate stages may require more space than the final output
+     *       due to MPI redistribution changing local array sizes.
+     */
     void forward(const double *real_input, Complex *complex_output)
     {
       std::cout << "Rank " << rank_ << ": Padding real input data" << std::endl;
@@ -250,21 +310,24 @@ namespace parafaft
       forward_in_place(reinterpret_cast<double *>(complex_output));
     }
 
-    // ========================================================================
-    // Forward R2C Transform (Fully In-Place)
-    //
-    // @param buffer  In-place real/complex buffer
-    //                Size: get_local_in_place_buffer_size() doubles
-    //                Input: Real data in first N elements per row
-    //                Output: Complex data (reinterpret as Complex*)
-    //
-    // The transform is fully in-place. After completion, access complex
-    // output via: reinterpret_cast<Complex*>(buffer)
-    // Complex size: get_local_complex_size() elements (may differ from
-    // buffer_size/2 for final stage distribution)
-    //
-    // WARNING: Input real data is destroyed during computation!
-    // ========================================================================
+    /**
+     * @brief Forward R2C transform (fully in-place).
+     *
+     * Computes the forward Real-to-Complex FFT entirely in-place on a single buffer.
+     * The buffer is reinterpreted between real and complex views during computation.
+     *
+     * @param padded_buffer In-place real/complex buffer.
+     *                      Size: get_required_output_size() doubles.
+     *                      Input: Padded real data with 2*(N/2+1) doubles per row,
+     *                             where the first N elements contain the real values.
+     *                      Output: Complex data accessible via reinterpret_cast<Complex*>(buffer).
+     *
+     * @note After completion, access the complex output via:
+     *       `reinterpret_cast<Complex*>(buffer)`
+     *       The complex array has get_local_complex_size() valid elements.
+     *
+     * @warning Input real data is destroyed during computation!
+     */
     void forward_in_place(double *padded_buffer)
     {
       // Reinterpret padded real buffer as complex for ping-pong
@@ -314,14 +377,20 @@ namespace parafaft
       // Result is already in place - no copy needed
     }
 
-    // ========================================================================
-    // Backward C2R Transform
-    //
-    // @param complex_input  Input complex array (not modified; user retains ownership)
-    // @param real_output    Output real array (will contain reconstructed real data)
-    //
-    // Implementation: Delegates to backward_padded() for the actual computation.
-    // ========================================================================
+    /**
+     * @brief Backward C2R transform (out-of-place).
+     *
+     * Computes the backward Complex-to-Real FFT, transforming Fourier-space
+     * complex coefficients back to real-space data.
+     *
+     * @param complex_input Input complex array of size get_local_complex_size().
+     *                      Not modified; user retains ownership.
+     * @param real_output Output real array of size get_local_real_size().
+     *                    Will contain reconstructed real data.
+     *
+     * @note Internally uses a working buffer of size get_required_output_size()/2
+     *       complex elements to handle intermediate MPI redistributions.
+     */
     void backward(const Complex *complex_input, double *real_output)
     {
       // In-place backward transform
@@ -331,20 +400,22 @@ namespace parafaft
       copy_padded_to_real(reinterpret_cast<double *>(complex_input), real_output);
     }
 
-    // ========================================================================
-    // Backward C2R Transform (Fully In-Place)
-    //
-    // @param buffer  In-place complex/real buffer
-    //                Size: get_local_in_place_buffer_size() doubles
-    //                Input: Complex data (from forward_in_place or user)
-    //                Output: Real data in first N elements per row
-    //
-    // The transform is fully in-place. Input complex data is interpreted
-    // as reinterpret_cast<Complex*>(buffer). After completion,
-    // the buffer contains real data.
-    //
-    // WARNING: Input complex data is destroyed during computation!
-    // ========================================================================
+    /**
+     * @brief Backward C2R transform (fully in-place).
+     *
+     * Computes the backward Complex-to-Real FFT entirely in-place on a single buffer.
+     * The buffer is reinterpreted between complex and real views during computation.
+     *
+     * @param padded_buffer In-place complex/real buffer.
+     *                      Size: get_required_output_size() doubles.
+     *                      Input: Complex data (from forward_in_place or user).
+     *                      Output: Real data in first N elements per row.
+     *
+     * @note Input complex data is interpreted as `reinterpret_cast<Complex*>(buffer)`.
+     *       After completion, the buffer contains real data.
+     *
+     * @warning Input complex data is destroyed during computation!
+     */
     void backward_in_place(double *padded_buffer)
     {
       // Reinterpret padded real buffer as complex for ping-pong
@@ -392,9 +463,11 @@ namespace parafaft
       backend_.execute_c2r_inplace(padded_buffer);
     }
 
-    // ========================================================================
-    // Query Functions for Input (Real Space)
-    // ========================================================================
+    /**
+     * @brief Get the local real array size.
+     *
+     * @return Total number of real elements in the local input array.
+     */
     int get_local_real_size() const
     {
       int size = 1;
@@ -404,20 +477,46 @@ namespace parafaft
       return size;
     }
 
-    // Query function for in-place buffer size
-    // Returns: local_n[0] × ... × local_n[D-2] × 2×(N/2+1) doubles
-    // This equals stage 0 complex output size when interpreted as double
-    int get_local_in_place_buffer_size() const
+    /**
+     * @brief Get the output memory size (in doubles) required for transforms.
+     *
+     * Returns the maximum buffer size needed across all stages, in doubles.
+     * This must be large enough for:
+     *   1. Stage 0 padded real input: batch × 2×(N/2+1) doubles
+     *   2. All intermediate complex stages after MPI redistribution
+     *
+     * The redistribution can change local sizes, so the maximum is returned.
+     *
+     * @return Buffer size in doubles (divide by 2 for complex element count).
+     */
+    int get_required_output_size() const
     {
-      int size = 1;
+      // Stage 0 padded real buffer size
+      int stage0_padded_size = 1;
       for (int i = 0; i < D - 1; ++i) {
-        size *= stage_shapes_[0][i]; // batch dimensions (multiplied by 2)
+        stage0_padded_size *= stage_shapes_[0][i];
       }
-      size *= 2 * (global_real_shape_[D - 1] / 2 + 1) + 2; // padded last dimension (2 doubles per complex)
-      // TODO: WHY IS THERE A +2 HERE??? If we remove it, we segfault at the MPI exchange step in forward_in_place!
-      return size;
+      stage0_padded_size *= 2 * (global_real_shape_[D - 1] / 2 + 1); // 2 doubles per complex
+
+      // Maximum complex size across all stages (including intermediate redistributions)
+      int max_complex_size = 0;
+      for (int stage = 0; stage < D; ++stage) {
+        int size = 1;
+        for (int i = 0; i < D; ++i) {
+          size *= stage_output_shapes_[stage][i];
+        }
+        max_complex_size = std::max(max_complex_size, size);
+      }
+
+      // Return max of padded real size and 2× max complex size (complex = 2 doubles)
+      return std::max(stage0_padded_size, 2 * max_complex_size);
     }
 
+    /**
+     * @brief Get the local real array shape.
+     *
+     * @param[out] shape Array of D integers to receive the local shape.
+     */
     void get_local_real_shape(int shape[D]) const
     {
       for (int i = 0; i < D; ++i) {
@@ -425,6 +524,11 @@ namespace parafaft
       }
     }
 
+    /**
+     * @brief Get the starting indices of the local real array in the global array.
+     *
+     * @param[out] start Array of D integers to receive the starting indices.
+     */
     void get_real_global_start(int start[D]) const
     {
       for (int i = 0; i < D; ++i) {
@@ -432,9 +536,11 @@ namespace parafaft
       }
     }
 
-    // ========================================================================
-    // Query Functions for Output (Complex/Fourier Space)
-    // ========================================================================
+    /**
+     * @brief Get the local complex array size (final output).
+     *
+     * @return Total number of complex elements in the local output array.
+     */
     int get_local_complex_size() const
     {
       int size = 1;
@@ -444,6 +550,11 @@ namespace parafaft
       return size;
     }
 
+    /**
+     * @brief Get the local complex array shape (final output).
+     *
+     * @param[out] shape Array of D integers to receive the local complex shape.
+     */
     void get_local_complex_shape(int shape[D]) const
     {
       for (int i = 0; i < D; ++i) {
@@ -451,6 +562,11 @@ namespace parafaft
       }
     }
 
+    /**
+     * @brief Get the starting indices of the local complex array in the global array.
+     *
+     * @param[out] start Array of D integers to receive the starting indices.
+     */
     void get_complex_global_start(int start[D]) const
     {
       for (int i = 0; i < D; ++i) {
@@ -458,9 +574,12 @@ namespace parafaft
       }
     }
 
-    // ========================================================================
-    // Debug: Print Shapes
-    // ========================================================================
+    /**
+     * @brief Print shape information for debugging.
+     *
+     * Outputs global shapes and per-stage local shapes to stdout.
+     * Only rank 0 prints to avoid duplicate output.
+     */
     void print_shapes() const
     {
       if (rank_ == 0) {
@@ -501,9 +620,15 @@ namespace parafaft
     }
 
   private:
-    // ========================================================================
-    // Helper: Copy non-padded real array to padded format
-    // ========================================================================
+    /**
+     * @brief Copy non-padded real array to FFTW-compatible padded format.
+     *
+     * Converts from contiguous real storage (N elements per row) to padded
+     * storage (2*(N/2+1) doubles per row) required for in-place R2C transforms.
+     *
+     * @param real_input Source array with contiguous real data.
+     * @param[out] padded_output Destination array with padded layout.
+     */
     void copy_real_to_padded(const double *real_input, double *padded_output) const
     {
       const int last_dim = global_real_shape_[D - 1];
@@ -522,9 +647,15 @@ namespace parafaft
       }
     }
 
-    // ========================================================================
-    // Helper: Copy padded real array to non-padded format
-    // ========================================================================
+    /**
+     * @brief Copy padded real array to contiguous non-padded format.
+     *
+     * Converts from padded storage (2*(N/2+1) doubles per row) back to
+     * contiguous real storage (N elements per row).
+     *
+     * @param padded_input Source array with padded layout.
+     * @param[out] real_output Destination array with contiguous real data.
+     */
     void copy_padded_to_real(const double *padded_input, double *real_output) const
     {
       const int last_dim = global_real_shape_[D - 1];
@@ -543,9 +674,12 @@ namespace parafaft
       }
     }
 
-    // ========================================================================
-    // Setup Stage Shapes for R2C
-    // ========================================================================
+    /**
+     * @brief Initialize stage shapes for the pencil decomposition.
+     *
+     * Computes local array shapes for each stage of the FFT pipeline,
+     * accounting for MPI redistribution between stages.
+     */
     void setup_stage_shapes()
     {
       // Store both real and complex global shapes
@@ -628,9 +762,11 @@ namespace parafaft
       }
     }
 
-    // ========================================================================
-    // Create Backend Plans
-    // ========================================================================
+    /**
+     * @brief Create FFT plans for all stages using the backend.
+     *
+     * Creates R2C/C2R plans for stage 0 and C2C plans for subsequent stages.
+     */
     void create_backend_plans()
     {
       // Stage 0: R2C plan
@@ -674,9 +810,17 @@ namespace parafaft
       }
     }
 
-    // ========================================================================
-    // Perform C2C FFT on specified buffer (for ping-pong buffering)
-    // ========================================================================
+    /**
+     * @brief Execute C2C FFT on a buffer for a specific stage.
+     *
+     * Handles the complexity of strided FFTs for different axes,
+     * looping over leading dimensions when necessary.
+     *
+     * @param stage Stage index (1 to D-1).
+     * @param axis Axis along which to perform the FFT.
+     * @param direction Forward or Backward FFT direction.
+     * @param buffer Buffer containing the complex data.
+     */
     void perform_fft_on_buffer(int stage, int axis, FFTDirection direction, Complex *buffer)
     {
       if (axis == 0) {
@@ -702,39 +846,32 @@ namespace parafaft
       }
     }
 
-    // ========================================================================
+    // =========================================================================
     // Member Variables
-    // ========================================================================
+    // =========================================================================
 
-    // MPI communicators
-    MPI_Comm comm_world_;
-    MPI_Comm comm_cart_;
-    std::vector<MPI_Comm> subcomms_;
+    MPI_Comm comm_world_;            ///< World communicator
+    MPI_Comm comm_cart_;             ///< Cartesian communicator for processor grid
+    std::vector<MPI_Comm> subcomms_; ///< Subcommunicators for each axis redistribution
 
-    // Processor information
-    int rank_, size_;
-    int dims_[D - 1];
-    int coords_[D - 1];
+    int rank_;          ///< This processor's rank in comm_world_
+    int size_;          ///< Total number of processors
+    int dims_[D - 1];   ///< Processor grid dimensions
+    int coords_[D - 1]; ///< This processor's coordinates in grid
 
-    // Shape tracking - KEY DIFFERENCE from C2C
-    int global_real_shape_[D];    // Original real array: [N₀, ..., N_{D-1}]
-    int global_complex_shape_[D]; // Reduced complex: [N₀, ..., N_{D-1}/2+1]
-    int real_global_start_[D];    // Start indices for real input
-    int complex_global_start_[D]; // Start indices for complex output
+    int global_real_shape_[D];    ///< Original real array shape: [N₀, ..., N_{D-1}]
+    int global_complex_shape_[D]; ///< Reduced complex shape: [N₀, ..., N_{D-1}/2+1]
+    int real_global_start_[D];    ///< Start indices for local real input
+    int complex_global_start_[D]; ///< Start indices for local complex output
 
-    // Stage shapes
-    // stage_shapes_[0] is the REAL input shape
-    // stage_output_shapes_[0] is the COMPLEX output shape after R2C
-    // For stages 1+, stage_shapes_ and stage_output_shapes_ are the same
+    /// Stage shapes: stage_shapes_[0] is REAL input, rest are COMPLEX
     std::vector<std::vector<int>> stage_shapes_;
+    /// Stage output shapes: stage_output_shapes_[0] is COMPLEX after R2C
     std::vector<std::vector<int>> stage_output_shapes_;
 
-    // Working array - single ping-pong buffer (paired with user's padded buffer)
-    // Memory optimization: Only 1 internal buffer instead of D+1
-    ComplexBuffer scratch_b_; // Ping-pong buffer
+    ComplexBuffer scratch_b_; ///< Ping-pong buffer for intermediate stages
 
-    // FFT backend
-    Backend backend_;
+    Backend backend_; ///< FFT backend (FFTW, cuFFT, etc.)
   };
 
 } // namespace parafaft

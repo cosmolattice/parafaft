@@ -83,7 +83,7 @@ int compare_fftwBackend(const int N, int rank)
   fft.get_local_complex_shape(local_complex_shape);
   fft.get_complex_global_start(complex_start);
 
-  int local_real_size = fft.get_local_in_place_buffer_size();
+  int local_real_size = fft.get_required_output_size();
   int local_complex_size = fft.get_local_complex_size();
 
   std::cout << "Local real shape on rank " << rank << ": " << local_real_shape[0] << " x " << local_real_shape[1]
@@ -106,7 +106,10 @@ int compare_fftwBackend(const int N, int rank)
     }
   }
 
-  std::vector<std::complex<double>> local_result(local_complex_size);
+  // Allocate output buffer large enough for all intermediate stages
+  // forward() uses this buffer for in-place computation across all stages
+  int local_result_buffer_size = fft.get_required_output_size() / 2;
+  std::vector<std::complex<double>> local_result(local_result_buffer_size);
 
   // Perform forward FFT
   fft.forward(local_data.data(), local_result.data());

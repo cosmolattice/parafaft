@@ -47,7 +47,7 @@ int main(int argc, char **argv)
   fft.get_complex_global_start(complex_start);
 
   int local_real_size = fft.get_local_real_size();
-  int local_padded_size = fft.get_local_in_place_buffer_size();
+  int local_padded_size = fft.get_required_output_size();
   int local_complex_size = fft.get_local_complex_size();
 
   // Verify size relationship (key optimization assumption)

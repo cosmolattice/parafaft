@@ -75,13 +75,13 @@ int compare_fftwBackend(const int N, int rank)
   fft.get_local_complex_shape(local_complex_shape);
   fft.get_complex_global_start(complex_start);
 
-  int local_padded_size = fft.get_local_in_place_buffer_size();
+  int local_padded_size = fft.get_required_output_size();
   int local_complex_size = fft.get_local_complex_size();
 
   std::cout << "Local real shape on rank " << rank << ": " << local_real_shape[0] << " x " << local_real_shape[1]
             << " x " << local_real_shape[2] << std::endl;
 
-  // scratch that, we can't check this because of the mysterious +2 in get_local_in_place_buffer_size()
+  // scratch that, we can't check this because of the mysterious +2 in get_required_output_size()
   // if (!(local_padded_size == (local_real_shape[0] * local_real_shape[1] * (local_real_shape[2] + 2)))) {
   //  std::cout << "Rank " << rank << ": Test failed: Local padded size mismatch." << std::endl;
   //  return 1;
