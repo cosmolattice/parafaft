@@ -1,6 +1,5 @@
 // FFTW version
 #include "../../parafaft_r2c.hpp"
-#include "../../backend/fftw3/fft_backend_fftw.hpp"
 #include <algorithm>
 #include <iostream>
 #include <cmath>
@@ -128,12 +127,6 @@ int compare_fftwBackend(const int N, int rank)
         const double error = std::abs(local_result[local_idx] - global_result[global_idx]);
         if (error > max_error) {
           max_error = error;
-          std::cout << "Rank " << rank << ": New max error " << std::scientific << max_error << " at local index ("
-                    << i0 << "," << i1 << "," << i2 << ")"
-                    << " global index (" << (complex_start[0] + i0) << "," << (complex_start[1] + i1) << ","
-                    << (complex_start[2] + i2) << ")"
-                    << " parallel=" << local_result[local_idx] << " reference=" << global_result[global_idx]
-                    << std::endl;
         }
       }
     }

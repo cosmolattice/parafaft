@@ -1,6 +1,5 @@
 // cuFFT version of test_mpi_gaussian.cpp
 #include "../../parafaft_r2c.hpp"
-#include "../../backend/cufft/fft_backend_cufft.hpp"
 #include <algorithm>
 #include <iostream>
 #include <cmath>

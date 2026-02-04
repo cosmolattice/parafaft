@@ -1,148 +1,66 @@
-cmake_minimum_required(VERSION 3.10)
-project(ParallelFFTTests)
-
-# Set C++ standard
-set(CMAKE_CXX_STANDARD 14)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-# Find required packages
-find_package(MPI REQUIRED)
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(FFTW3 REQUIRED fftw3)
-
-include(CheckLanguage)
-option(CUDA "Build with CUDA support" OFF)
-if(CUDA)
-    check_language(CUDA)
-    if(!CMAKE_CUDA_COMPILER)
-        message(FATAL_ERROR "CUDA support requested but no CUDA compiler found.")
-    endif()
-    enable_language(CUDA)
-
-    find_package(CUDAToolkit REQUIRED)
-
-    include_directories(${CUDA_INCLUDE_DIRS})
-    link_directories(${CUDA_LIBRARY_DIRS})
-    # if CMAKE_CUDA_ARCHITECTURES is not set, set it to native
-    if(NOT CMAKE_CUDA_ARCHITECTURES)
-        set(CMAKE_CUDA_ARCHITECTURES "native")
-    endif()
-else()
-    message(STATUS "Building without CUDA support")
-endif()
-
-# Include directories
-include_directories(
-    ${CMAKE_CURRENT_SOURCE_DIR}/..
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    /opt/homebrew/include
-    ${MPI_INCLUDE_PATH}
-    ${FFTW3_INCLUDE_DIRS}
-)
-
-# Link directories
-link_directories(
-    ${CMAKE_CURRENT_SOURCE_DIR}/..
-    /opt/homebrew/lib
-    /usr/lib/aarch64-linux-gnu
-    ${FFTW3_LIBRARY_DIRS}
-)
-
-# Compiler flags
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${MPI_COMPILE_FLAGS}")
-
-# Link flags
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${MPI_LINK_FLAGS}")
-
-# Define dependencies for MPI tests
-set(MPI_GENERIC_DEPS 
-    ../parafaft_generic.hpp 
-    ../backend/fftw3/fft_backend_fftw.hpp
-)
-
-set(MPI_R2C_DEPS 
-    ../parafaft_r2c.hpp 
-    ../backend/fftw3/fft_backend_fftw.hpp
-)
-
-set(UNIT_DEPS 
-    ../backend/fft_backend.hpp 
-    ../backend/fftw3/fft_backend_fftw.hpp
-)
-
 # ##############################################################################
 # FFTW Backend Tests
 # ##############################################################################
 
 # C2C MPI Tests
 add_executable(test_fftw_mpi_constant_32 c2c/test_fftw_mpi_constant_32.cpp)
-target_link_libraries(test_fftw_mpi_constant_32 ${MPI_LIBRARIES} ${FFTW3_LIBRARIES})
-target_compile_options(test_fftw_mpi_constant_32 PRIVATE ${MPI_COMPILE_FLAGS})
+target_link_libraries(test_fftw_mpi_constant_32 parafaft::parafaft)
 set_target_properties(test_fftw_mpi_constant_32 PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c2c
 )
 
 add_executable(test_fftw_mpi_c2c_gaussian_roundtrip c2c/test_fftw_mpi_c2c_gaussian_roundtrip.cpp)
-target_link_libraries(test_fftw_mpi_c2c_gaussian_roundtrip ${MPI_LIBRARIES} ${FFTW3_LIBRARIES})
-target_compile_options(test_fftw_mpi_c2c_gaussian_roundtrip PRIVATE ${MPI_COMPILE_FLAGS})
+target_link_libraries(test_fftw_mpi_c2c_gaussian_roundtrip parafaft::parafaft)
 set_target_properties(test_fftw_mpi_c2c_gaussian_roundtrip PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c2c
 )
 
 add_executable(test_fftw_mpi_8cubed c2c/test_fftw_mpi_8cubed.cpp)
-target_link_libraries(test_fftw_mpi_8cubed ${MPI_LIBRARIES} ${FFTW3_LIBRARIES})
-target_compile_options(test_fftw_mpi_8cubed PRIVATE ${MPI_COMPILE_FLAGS})
+target_link_libraries(test_fftw_mpi_8cubed parafaft::parafaft)
 set_target_properties(test_fftw_mpi_8cubed PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c2c
 )
 
 add_executable(test_fftw_mpi_4d_roundtrip c2c/test_fftw_mpi_4d_roundtrip.cpp)
-target_link_libraries(test_fftw_mpi_4d_roundtrip ${MPI_LIBRARIES} ${FFTW3_LIBRARIES})
-target_compile_options(test_fftw_mpi_4d_roundtrip PRIVATE ${MPI_COMPILE_FLAGS})
+target_link_libraries(test_fftw_mpi_4d_roundtrip parafaft::parafaft)
 set_target_properties(test_fftw_mpi_4d_roundtrip PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c2c
 )
 
 add_executable(test_fftw_mpi_c2c_gaussian c2c/test_fftw_mpi_c2c_gaussian.cpp)
-target_link_libraries(test_fftw_mpi_c2c_gaussian ${MPI_LIBRARIES} ${FFTW3_LIBRARIES})
-target_compile_options(test_fftw_mpi_c2c_gaussian PRIVATE ${MPI_COMPILE_FLAGS})
+target_link_libraries(test_fftw_mpi_c2c_gaussian parafaft::parafaft)
 set_target_properties(test_fftw_mpi_c2c_gaussian PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c2c
 )
 
 # R2C MPI Tests
 add_executable(test_fftw_mpi_r2c_gaussian r2c/test_fftw_mpi_r2c_gaussian.cpp)
-target_link_libraries(test_fftw_mpi_r2c_gaussian ${MPI_LIBRARIES} ${FFTW3_LIBRARIES})
-target_compile_options(test_fftw_mpi_r2c_gaussian PRIVATE ${MPI_COMPILE_FLAGS})
+target_link_libraries(test_fftw_mpi_r2c_gaussian parafaft::parafaft)
 set_target_properties(test_fftw_mpi_r2c_gaussian PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/r2c
 )
 
 add_executable(test_fftw_mpi_r2c_roundtrip r2c/test_fftw_mpi_r2c_roundtrip.cpp)
-target_link_libraries(test_fftw_mpi_r2c_roundtrip ${MPI_LIBRARIES} ${FFTW3_LIBRARIES})
-target_compile_options(test_fftw_mpi_r2c_roundtrip PRIVATE ${MPI_COMPILE_FLAGS})
+target_link_libraries(test_fftw_mpi_r2c_roundtrip parafaft::parafaft)
 set_target_properties(test_fftw_mpi_r2c_roundtrip PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/r2c
 )
 
 add_executable(test_fftw_mpi_r2c_padded_roundtrip r2c/test_fftw_mpi_r2c_padded_roundtrip.cpp)
-target_link_libraries(test_fftw_mpi_r2c_padded_roundtrip ${MPI_LIBRARIES} ${FFTW3_LIBRARIES})
-target_compile_options(test_fftw_mpi_r2c_padded_roundtrip PRIVATE ${MPI_COMPILE_FLAGS})
+target_link_libraries(test_fftw_mpi_r2c_padded_roundtrip parafaft::parafaft)
 set_target_properties(test_fftw_mpi_r2c_padded_roundtrip PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/r2c
 )
 
 add_executable(test_fftw_mpi_r2c_padded_gaussian r2c/test_fftw_mpi_r2c_padded_gaussian.cpp)
-target_link_libraries(test_fftw_mpi_r2c_padded_gaussian ${MPI_LIBRARIES} ${FFTW3_LIBRARIES})
-target_compile_options(test_fftw_mpi_r2c_padded_gaussian PRIVATE ${MPI_COMPILE_FLAGS})
+target_link_libraries(test_fftw_mpi_r2c_padded_gaussian parafaft::parafaft)
 set_target_properties(test_fftw_mpi_r2c_padded_gaussian PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/r2c
 )
 
 # Unit Tests
 add_executable(test_fftw_backend unit/test_fftw_backend.cpp)
-target_link_libraries(test_fftw_backend ${MPI_LIBRARIES} ${FFTW3_LIBRARIES})
-target_compile_options(test_fftw_backend PRIVATE ${MPI_COMPILE_FLAGS})
+target_link_libraries(test_fftw_backend parafaft::parafaft)
 set_target_properties(test_fftw_backend PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/unit
 )
@@ -151,31 +69,25 @@ set_target_properties(test_fftw_backend PROPERTIES
 # cuFFT Backend Tests
 # ##############################################################################
 
-if(CUDA)
+if(PARAFAFT_CUDA)
     # C2C MPI Tests
     add_executable(test_cufft_mpi_c2c_gaussian c2c/test_cufft_mpi_c2c_gaussian.cu)
-    target_link_libraries(test_cufft_mpi_c2c_gaussian ${MPI_LIBRARIES} CUDA::cufft_static ${FFTW3_LIBRARIES})
-    target_compile_options(test_cufft_mpi_c2c_gaussian PRIVATE ${MPI_COMPILE_FLAGS})
+    target_link_libraries(test_cufft_mpi_c2c_gaussian parafaft::parafaft)
     set_target_properties(test_cufft_mpi_c2c_gaussian PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c2c
-        CUDA_SEPARABLE_COMPILATION ON
     )
 
     # R2C MPI Tests
     add_executable(test_cufft_mpi_r2c_padded_gaussian r2c/test_cufft_mpi_r2c_padded_gaussian.cu)
-    target_link_libraries(test_cufft_mpi_r2c_padded_gaussian ${MPI_LIBRARIES} CUDA::cufft_static ${FFTW3_LIBRARIES})
-    target_compile_options(test_cufft_mpi_r2c_padded_gaussian PRIVATE ${MPI_COMPILE_FLAGS})
+    target_link_libraries(test_cufft_mpi_r2c_padded_gaussian parafaft::parafaft)
     set_target_properties(test_cufft_mpi_r2c_padded_gaussian PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/r2c
-        CUDA_SEPARABLE_COMPILATION ON
     )
 
     add_executable(test_cufft_mpi_r2c_gaussian r2c/test_cufft_mpi_r2c_gaussian.cu)
-    target_link_libraries(test_cufft_mpi_r2c_gaussian ${MPI_LIBRARIES} CUDA::cufft_static ${FFTW3_LIBRARIES})
-    target_compile_options(test_cufft_mpi_r2c_gaussian PRIVATE ${MPI_COMPILE_FLAGS})
+    target_link_libraries(test_cufft_mpi_r2c_gaussian parafaft::parafaft)
     set_target_properties(test_cufft_mpi_r2c_gaussian PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/r2c
-        CUDA_SEPARABLE_COMPILATION ON
     )
 
     # Unit Tests (cuFFT Backend)
@@ -183,26 +95,24 @@ if(CUDA)
     target_link_libraries(test_cuvector CUDA::cudart)
     set_target_properties(test_cuvector PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/unit
-        CUDA_SEPARABLE_COMPILATION ON
     )
 
     add_executable(test_cufft_backend unit/test_cufft_backend.cu)
-    target_link_libraries(test_cufft_backend CUDA::cufft_static CUDA::cudart)
+    target_link_libraries(test_cufft_backend parafaft::parafaft)
     set_target_properties(test_cufft_backend PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/unit
-        CUDA_SEPARABLE_COMPILATION ON
     )
 endif()
 
 # Serial Reference Tests (using standard g++ compiler)
 add_executable(reference_serial_3d reference/reference_serial_3d.cpp)
-target_link_libraries(reference_serial_3d ${FFTW3_LIBRARIES})
+target_link_libraries(reference_serial_3d parafaft::parafaft)
 set_target_properties(reference_serial_3d PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/reference
 )
 
 add_executable(reference_serial_r2c_3d reference/reference_serial_r2c_3d.cpp)
-target_link_libraries(reference_serial_r2c_3d ${FFTW3_LIBRARIES})
+target_link_libraries(reference_serial_r2c_3d parafaft::parafaft)
 set_target_properties(reference_serial_r2c_3d PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/reference
 )
@@ -298,7 +208,7 @@ add_mpi_tests_varN(fftw_r2c_padded_gaussian r2c/test_fftw_mpi_r2c_padded_gaussia
 add_mpi_tests_varN(fftw_r2c_padded_roundtrip r2c/test_fftw_mpi_r2c_padded_roundtrip test_fftw_mpi_r2c_padded_roundtrip)
 
 # cuFFT tests (only added if CUDA is enabled)
-if(CUDA)
+if(PARAFAFT_CUDA)
     add_serial_tests(cufft_unit_backend unit/test_cufft_backend test_cufft_backend)
     add_serial_tests(cufft_unit_cuvector unit/test_cuvector test_cuvector)
 

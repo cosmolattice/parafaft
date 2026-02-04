@@ -46,13 +46,14 @@ int main(int argc, char **argv)
   fft.get_local_complex_shape(local_complex_shape);
   fft.get_complex_global_start(complex_start);
 
+  int output_size = fft.get_required_output_size();
   int local_real_size = fft.get_local_real_size();
   int local_complex_size = fft.get_local_complex_size();
 
   // Allocate local arrays
   std::vector<double> real_data(local_real_size);
-  std::vector<double> real_result(local_real_size);
-  std::vector<std::complex<double>> complex_data(local_complex_size);
+  std::vector<double> real_result(output_size);
+  std::vector<std::complex<double>> complex_data(output_size / 2);
 
   // Initialize local portion of Gaussian
   int idx = 0;
