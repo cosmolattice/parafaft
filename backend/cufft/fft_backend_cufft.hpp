@@ -12,6 +12,8 @@
 #ifndef PARAFAFT_BACKEND_CUFFT_HPP
 #define PARAFAFT_BACKEND_CUFFT_HPP
 
+#if defined(__CUDACC__) || defined(__CUDA_ARCH__) || defined(__NVCC__)
+
 #include <cufft.h>
 #include <cuda_runtime.h>
 #include <cuda/std/complex>
@@ -405,5 +407,7 @@ namespace parafaft
   };
 
 } // namespace parafaft
+
+#endif // defined(__CUDACC__) || defined(__CUDA_ARCH__) || defined(__NVCC__)
 
 #endif // PARAFAFT_BACKEND_CUFFT_HPP

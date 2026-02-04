@@ -36,20 +36,16 @@ A C++ implementation of multidimensional parallel FFT using MPI, based on the al
 ## Quick Start
 
 ```bash
-# Navigate to test directory (important: all tests should be run from here)
-cd test
-
-# Build all tests
-make all
+# Build with CMake
+mkdir build && cd build
+cmake .. -DPARAFAFT_TEST=ON
+make
 
 # Run all tests
-make run-all
+ctest
 
-# Compare serial vs MPI (validates exact match)
-make compare
-
-# Run R2C roundtrip tests specifically
-bash run_r2c_roundtrip_tests.sh
+# Run tests with verbose output
+ctest -V
 ```
 
 ## Key Algorithm Details
@@ -95,19 +91,52 @@ For R2C transforms, the last axis is reduced from N to N/2+1 in complex space du
 
 - MPI implementation (OpenMPI, MPICH, etc.)
 - FFTW3 library
-- C++11 compatible compiler
-- Python3 (for comparison scripts)
+- C++14 compatible compiler
+- CMake 3.18+
+- CUDA Toolkit (optional, for GPU support)
 
-## Building
+## Building with CMake
 
 ```bash
-# Build examples
-cd examples
-make all
+# Basic build
+mkdir build && cd build
+cmake ..
+make
 
-# Or build tests
-cd test
-make all
+# With CUDA support
+cmake .. -DPARAFAFT_CUDA=ON
+
+# With tests
+cmake .. -DPARAFAFT_TEST=ON
+
+# Both CUDA and tests
+cmake .. -DPARAFAFT_CUDA=ON -DPARAFAFT_TEST=ON
+
+# Install the library
+cmake --install . --prefix /your/install/path
+```
+
+### CMake Options
+
+| Option          | Default | Description                       |
+| --------------- | ------- | --------------------------------- |
+| `PARAFAFT_CUDA` | `OFF`   | Enable CUDA/cuFFT backend support |
+| `PARAFAFT_TEST` | `OFF`   | Build the test suite              |
+
+### Using in Your CMake Project
+
+After installation, use `find_package` to link against parafaft:
+
+```cmake
+find_package(parafaft REQUIRED)
+target_link_libraries(your_target PRIVATE parafaft::parafaft)
+```
+
+Or add as a subdirectory:
+
+```cmake
+add_subdirectory(path/to/parafaft)
+target_link_libraries(your_target PRIVATE parafaft::parafaft)
 ```
 
 ## Running
@@ -119,9 +148,9 @@ mpirun -n 4 ./examples/example_3d_pencil
 # 4D example (8 MPI ranks)
 mpirun -n 8 ./examples/example_4d_pencil
 
-# Run comprehensive tests
-cd test
-make run-all
+# Run tests
+cd build
+ctest
 ```
 
 ## Usage Examples
@@ -224,18 +253,14 @@ Comprehensive test suite in `test/` directory:
 ### R2C/C2R Tests
 - **test_mpi_r2c_gaussian**: Forward R2C transform validation
 - **test_mpi_r2c_roundtrip**: Full roundtrip (R2C → C2R) accuracy test
-- **run_r2c_roundtrip_tests.sh**: Comprehensive test script for multiple grid sizes and process counts
 
 Run tests:
 ```bash
-cd test
-make run-specialized   # Run specialized C2C tests
-make run-generic       # Run generic C2C tests
-make run-all           # Run all tests
-make compare           # Verify MPI matches serial FFTW exactly
-
-# R2C roundtrip tests
-bash run_r2c_roundtrip_tests.sh  # Tests 8³, 24³, 32³, 100³ with 4 and 8 processes
+cd build
+ctest                # Run all tests
+ctest -V             # Verbose output
+ctest -R r2c         # Run only R2C tests
+ctest -R c2c         # Run only C2C tests
 ```
 
 See `test/README.md` for detailed test documentation.
@@ -277,10 +302,6 @@ Specialized implementations for 3D and 4D C2C transforms:
 - Explicit template specializations: `ParaFaFT<3>` and `ParaFaFT<4>`
 - Same API as generic version
 - **Note**: Generic version is now recommended for all use cases
-
-### Examples
-- `examples/example_3d_pencil.cpp` - 3D C2C usage example
-- `examples/example_4d_pencil.cpp` - 4D C2C usage example
 
 ### Benchmarks
 See `benchmark/` directory:

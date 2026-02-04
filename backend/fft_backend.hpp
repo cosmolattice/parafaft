@@ -134,4 +134,9 @@ namespace parafaft
 
 } // namespace parafaft
 
+// Include specific backend implementations
+
+#include "./fftw3/fft_backend_fftw.hpp"
+#include "./cufft/fft_backend_cufft.hpp"
+
 #endif // PARAFAFT_BACKEND_HPP

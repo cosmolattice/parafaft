@@ -6,24 +6,50 @@
 # Navigate to directory
 cd /path/to/parafaft
 
-# Build and run all tests
-cd test
-make run-all
+# Build with CMake
+mkdir build && cd build
+cmake .. -DPARAFAFT_TEST=ON
+make
 
-# Compare serial vs MPI (validates correctness)
-make compare
+# Run all tests
+ctest
 ```
 
-## Building
+## Building with CMake
 
 ```bash
-# Build examples
-cd examples
-make all
+# Basic build
+mkdir build && cd build
+cmake ..
+make
 
-# Or build tests
-cd test
-make all
+# With CUDA support
+cmake .. -DPARAFAFT_CUDA=ON
+
+# With tests
+cmake .. -DPARAFAFT_TEST=ON
+
+# Both CUDA and tests
+cmake .. -DPARAFAFT_CUDA=ON -DPARAFAFT_TEST=ON
+```
+
+### CMake Options
+
+| Option          | Default | Description               |
+| --------------- | ------- | ------------------------- |
+| `PARAFAFT_CUDA` | `OFF`   | Enable CUDA/cuFFT backend |
+| `PARAFAFT_TEST` | `OFF`   | Build the test suite      |
+
+### Using in Your CMake Project
+
+```cmake
+# Option 1: After installation
+find_package(parafaft REQUIRED)
+target_link_libraries(your_target PRIVATE parafaft::parafaft)
+
+# Option 2: As subdirectory
+add_subdirectory(path/to/parafaft)
+target_link_libraries(your_target PRIVATE parafaft::parafaft)
 ```
 
 ## Running
@@ -36,8 +62,8 @@ mpirun -n 4 ./examples/example_3d_pencil
 mpirun -n 8 ./examples/example_4d_pencil
 
 # Run test suite
-cd test
-make run-all
+cd build
+ctest
 ```
 
 ## Basic Usage
@@ -76,35 +102,27 @@ int main(int argc, char** argv) {
 
 ## What Works
 
-| Feature | Status |
-|---------|--------|
-| 3D Forward FFT | ✅ Fully working |
-| 3D Backward FFT | ✅ Fully working |
-| 4D Forward FFT | ✅ Fully working |
-| 4D Backward FFT | ✅ Fully working |
-| R2C Forward FFT | ✅ Fully working |
+| Feature          | Status          |
+| ---------------- | --------------- |
+| 3D Forward FFT   | ✅ Fully working |
+| 3D Backward FFT  | ✅ Fully working |
+| 4D Forward FFT   | ✅ Fully working |
+| 4D Backward FFT  | ✅ Fully working |
+| R2C Forward FFT  | ✅ Fully working |
 | C2R Backward FFT | ✅ Fully working |
-| Serial vs MPI | ✅ Exact match |
-| Constant data | ✅ Tested |
-| Gaussian data | ✅ Tested |
-| Arbitrary data | ✅ Tested |
+| Serial vs MPI    | ✅ Exact match   |
+| Constant data    | ✅ Tested        |
+| Gaussian data    | ✅ Tested        |
+| Arbitrary data   | ✅ Tested        |
 
 ## Testing
 
 ```bash
-cd test
-
-# Run all tests
-make run-all
-
-# Just compare serial vs MPI
-make compare
-
-# Individual tests
-mpirun -n 4 ./test_mpi_constant_32
-mpirun -n 4 ./test_mpi_gaussian_roundtrip
-mpirun -n 4 ./test_8cubed
-mpirun -n 4 ./test_4d_roundtrip
+cd build
+ctest                    # Run all tests
+ctest -V                 # Verbose output
+ctest -R r2c             # Run only R2C tests
+ctest -R c2c             # Run only C2C tests
 ```
 
 ## Common Issues
@@ -116,9 +134,10 @@ brew install fftw        # macOS
 apt install libfftw3-dev # Ubuntu
 ```
 
-Then update include/library paths in your compile command:
+Then update the cmake build:
 ```bash
-mpicxx ... -I/path/to/fftw/include -L/path/to/fftw/lib -lfftw3
+cmake .. -DFFTW3_INCLUDE_DIR=/path/to/fftw/include -DFFTW3_LIBRARY=/path/to/fftw/lib/libfftw3.so
+make
 ```
 
 ### Incorrect results after roundtrip
@@ -140,15 +159,16 @@ MPI_Finalize(); // Now safe
 
 ## File Overview
 
-| File | Description |
-|------|-------------|
-| `parafaft_generic.hpp` | Dimension-agnostic C2C transforms |
-| `parafaft_r2c.hpp` | R2C/C2R transforms for real data |
-| `fft_backend_fftw.hpp` | FFTW backend implementation |
-| `examples/example_3d_pencil.cpp` | 3D usage example |
-| `examples/example_4d_pencil.cpp` | 4D usage example |
-| `test/` | Comprehensive test suite |
-| `test/README.md` | Detailed test documentation |
+| File                                  | Description                       |
+| ------------------------------------- | --------------------------------- |
+| `CMakeLists.txt`                      | CMake build configuration         |
+| `parafaft_generic.hpp`                | Dimension-agnostic C2C transforms |
+| `parafaft_r2c.hpp`                    | R2C/C2R transforms for real data  |
+| `backend/fft_backend.hpp`             | Backend interface                 |
+| `backend/fftw3/fft_backend_fftw.hpp`  | FFTW backend implementation       |
+| `backend/cufft/fft_backend_cufft.hpp` | cuFFT backend implementation      |
+| `test/`                               | Comprehensive test suite          |
+| `test/README.md`                      | Detailed test documentation       |
 
 ## Documentation
 

@@ -60,7 +60,7 @@
 // ============================================================================
 
 #include <mpi.h>
-#include "backend/fftw3/fft_backend_fftw.hpp"
+#include "./backend/fft_backend.hpp"
 #include <vector>
 #include <complex>
 #include <stdexcept>
@@ -391,7 +391,7 @@ namespace parafaft
      * @note Internally uses a working buffer of size get_required_output_size()/2
      *       complex elements to handle intermediate MPI redistributions.
      */
-    void backward(const Complex *complex_input, double *real_output)
+    void backward(Complex *complex_input, double *real_output)
     {
       // In-place backward transform
       backward_in_place(reinterpret_cast<double *>(complex_input));
