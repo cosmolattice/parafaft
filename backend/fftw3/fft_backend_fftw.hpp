@@ -1,3 +1,12 @@
+/**
+ * @file fft_backend_fftw.hpp
+ * @brief FFTW3 backend implementation for ParaFaFT.
+ *
+ * This header provides an FFT backend using the FFTW3 library for CPU-based
+ * FFT operations. Supports C2C, R2C, and C2R transforms as required by
+ * ParaFaFT and ParaFaFT_R2C.
+ */
+
 #ifndef PARAFAFT_BACKEND_FFTW_HPP
 #define PARAFAFT_BACKEND_FFTW_HPP
 
@@ -9,17 +18,45 @@
 
 namespace parafaft
 {
+  /**
+   * @class FFTWBackend
+   * @brief FFTW3 backend for CPU-based FFT operations.
+   *
+   * Provides an interface compatible with ParaFaFT for executing FFT transforms
+   * using FFTW3. Supports C2C, R2C, and C2R transforms with in-place operations.
+   *
+   * Memory management: Uses std::vector for host memory allocation.
+   * All data pointers passed to this backend must be host (CPU) pointers.
+   *
+   * @note FFTW plans are not copyable; this class is move-only.
+   */
   class FFTWBackend
   {
   public:
-    using Complex = std::complex<double>;
-    using Buffer = std::vector<double>;
-    using ComplexBuffer = std::vector<Complex>;
+    using Complex = std::complex<double>;       ///< Complex number type (CPU-compatible)
+    using Buffer = std::vector<double>;         ///< Real buffer type (host memory)
+    using ComplexBuffer = std::vector<Complex>; ///< Complex buffer type (host memory)
 
-    // Constructor: Initialize storage for plans
+    /**
+     * @brief Construct an FFTW backend with storage for the given number of stages.
+     *
+     * @param num_stages Number of FFT stages (typically D for D-dimensional transform)
+     */
     explicit FFTWBackend(int num_stages) : forward_plans_(num_stages, nullptr), backward_plans_(num_stages, nullptr) {}
 
-    // Create and store plans for a specific stage
+    /**
+     * @brief Create and store FFTW plans for a specific stage (C2C transforms).
+     *
+     * Creates both forward and backward plans for the given stage, using the
+     * FFTW_ESTIMATE flag for quick planning.
+     *
+     * @param stage Stage index for plan storage (0 to num_stages-1)
+     * @param length FFT length (number of complex elements per transform)
+     * @param batch Number of 1D transforms to execute in batch
+     * @param data Host pointer for plan creation (alignment reference)
+     * @param stride Stride between consecutive elements in a transform
+     * @param dist Distance between first elements of consecutive transforms
+     */
     void create_stage_plan(int stage, int length, int batch, Complex *data, int stride, int dist)
     {
       int n[] = {length};
@@ -34,9 +71,19 @@ namespace parafaft
                                                   dist, FFTW_BACKWARD, FFTW_ESTIMATE);
     }
 
-    // Create in-place R2C plan for padded memory optimization
-    // Input: real values in padded buffer
-    // Output: complex values in same padded buffer (reinterpreted)
+    /**
+     * @brief Create in-place R2C plan for padded memory layout.
+     *
+     * Creates an R2C (real-to-complex) plan for in-place transformation.
+     * The input is N real values per transform, output is N/2+1 complex values,
+     * stored in the same padded buffer.
+     *
+     * @param length Real-space input length N (number of real values per transform)
+     * @param batch Number of 1D transforms to execute in batch
+     * @param padded_real Host pointer to padded real buffer (2*(N/2+1) doubles per row)
+     * @param stride Element stride (typically 1 for contiguous data)
+     * @param dist Distance between batches in doubles (should be 2*(N/2+1) for in-place)
+     */
     void create_r2c_inplace_plan(int length,          // Real-space input length N
                                  int batch,           // Number of transforms
                                  double *padded_real, // Padded real buffer
@@ -54,15 +101,32 @@ namespace parafaft
                                  FFTW_ESTIMATE);
     }
 
-    // Execute in-place R2C plan
+    /**
+     * @brief Execute in-place R2C transform.
+     *
+     * Transforms real data to complex data in-place. The input buffer must be
+     * padded (2*(N/2+1) doubles per row) to accommodate the complex output.
+     *
+     * @param padded_real Host pointer to padded real input buffer (overwritten with complex output)
+     */
     void execute_r2c_inplace(double *padded_real)
     {
       fftw_execute_dft_r2c(r2c_inplace_plan_, padded_real, reinterpret_cast<fftw_complex *>(padded_real));
     }
 
-    // Create in-place C2R plan for padded memory optimization
-    // Input: complex values in padded real buffer (reinterpreted)
-    // Output: real values in same padded buffer
+    /**
+     * @brief Create in-place C2R plan for padded memory layout.
+     *
+     * Creates a C2R (complex-to-real) plan for in-place transformation.
+     * The input is N/2+1 complex values per transform, output is N real values,
+     * stored in the same padded buffer.
+     *
+     * @param length Real-space output length N (number of real values per transform)
+     * @param batch Number of 1D transforms to execute in batch
+     * @param padded_real Host pointer to padded buffer (used for both complex input and real output)
+     * @param stride Element stride (typically 1 for contiguous data)
+     * @param dist Distance between batches (padded: 2*(N/2+1) doubles)
+     */
     void create_c2r_inplace_plan(int length,          // Real-space output length N
                                  int batch,           // Number of transforms
                                  double *padded_real, // Padded real buffer (also used as complex input)
@@ -79,13 +143,30 @@ namespace parafaft
                                  padded_real, NULL, stride, dist, FFTW_ESTIMATE);
     }
 
-    // Execute in-place C2R plan
+    /**
+     * @brief Execute in-place C2R transform.
+     *
+     * Transforms complex data to real data in-place. The buffer layout must
+     * match the plan created by create_c2r_inplace_plan().
+     *
+     * @param padded_real Host pointer to buffer (complex input, real output)
+     */
     void execute_c2r_inplace(double *padded_real)
     {
       fftw_execute_dft_c2r(c2r_inplace_plan_, reinterpret_cast<fftw_complex *>(padded_real), padded_real);
     }
 
-    // Execute pre-created plan for specified stage on given data
+    /**
+     * @brief Execute pre-created plan for specified stage.
+     *
+     * Executes the C2C transform for the given stage using the new-array
+     * execution interface (fftw_execute_dft), allowing the plan to be
+     * applied to data at a different address with the same layout.
+     *
+     * @param stage Stage index (0 to num_stages-1)
+     * @param direction Transform direction (Forward or Backward)
+     * @param data Host pointer to complex data buffer
+     */
     void execute_stage(int stage, FFTDirection direction, Complex *data)
     {
       fftw_plan plan = (direction == FFTDirection::Forward) ? forward_plans_[stage] : backward_plans_[stage];
@@ -93,10 +174,20 @@ namespace parafaft
       fftw_execute_dft(plan, fftw_data, fftw_data);
     }
 
-    // Memory copy method
+    /**
+     * @brief Copy memory between host buffers.
+     *
+     * Standard memory copy using std::memcpy. For CPU-based operations.
+     *
+     * @param dest Destination pointer
+     * @param src Source pointer
+     * @param bytes Number of bytes to copy
+     */
     static void memcpy(void *dest, const void *src, size_t bytes) { std::memcpy(dest, src, bytes); }
 
-    // Destructor: Clean up all plans
+    /**
+     * @brief Destructor. Cleans up all FFTW plans.
+     */
     ~FFTWBackend()
     {
       for (auto plan : forward_plans_) {
@@ -109,11 +200,19 @@ namespace parafaft
       if (c2r_inplace_plan_) fftw_destroy_plan(c2r_inplace_plan_);
     }
 
-    // Disable copying (plans can't be safely copied)
+    /// @brief Deleted copy constructor (FFTW plans cannot be safely copied)
     FFTWBackend(const FFTWBackend &) = delete;
+    /// @brief Deleted copy assignment (FFTW plans cannot be safely copied)
     FFTWBackend &operator=(const FFTWBackend &) = delete;
 
-    // Enable moving
+    /**
+     * @brief Move constructor.
+     *
+     * Transfers ownership of all plans from another backend instance.
+     * The moved-from object is left in a valid but empty state.
+     *
+     * @param other Backend to move from
+     */
     FFTWBackend(FFTWBackend &&other) noexcept
         : forward_plans_(std::move(other.forward_plans_)), backward_plans_(std::move(other.backward_plans_)),
           r2c_inplace_plan_(other.r2c_inplace_plan_), c2r_inplace_plan_(other.c2r_inplace_plan_)
@@ -125,10 +224,10 @@ namespace parafaft
     }
 
   private:
-    std::vector<fftw_plan> forward_plans_;
-    std::vector<fftw_plan> backward_plans_;
-    fftw_plan r2c_inplace_plan_ = nullptr;
-    fftw_plan c2r_inplace_plan_ = nullptr;
+    std::vector<fftw_plan> forward_plans_;  ///< Forward C2C plans (one per stage)
+    std::vector<fftw_plan> backward_plans_; ///< Backward C2C plans (one per stage)
+    fftw_plan r2c_inplace_plan_ = nullptr;  ///< In-place R2C plan
+    fftw_plan c2r_inplace_plan_ = nullptr;  ///< In-place C2R plan
   };
 
 } // namespace parafaft
