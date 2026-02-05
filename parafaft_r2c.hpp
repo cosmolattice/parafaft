@@ -619,6 +619,19 @@ namespace parafaft
       }
     }
 
+    /**
+     * @brief Get the domain decomposition used by this FFT object.
+     *
+     * @param[out] decomposition Array of D integers to receive the domain decomposition.
+     */
+    void get_domain_decomposition(int decomposition[D]) const
+    {
+      for (int i = 0; i < D - 1; ++i) {
+        decomposition[i] = dims_[i];
+      }
+      decomposition[D - 1] = 1; // Last dimension not distributed
+    }
+
   private:
     /**
      * @brief Copy non-padded real array to FFTW-compatible padded format.
