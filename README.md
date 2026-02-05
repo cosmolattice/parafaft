@@ -58,7 +58,7 @@ include(FetchContent)
 FetchContent_Declare(
   ParaFaFT
   GIT_REPOSITORY https://github.com/aflorio2/parafaft.git
-  GIT_TAG        cuda
+  GIT_TAG        main
   )
 FetchContent_MakeAvailable(ParaFaFT)
 
