@@ -27,21 +27,9 @@ set_target_properties(test_fftw_mpi_4d_roundtrip PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c2c
 )
 
-add_executable(test_fftw_mpi_c2c_gaussian_3d c2c/test_fftw_mpi_c2c_gaussian_3d.cpp)
-target_link_libraries(test_fftw_mpi_c2c_gaussian_3d parafaft::parafaft)
-set_target_properties(test_fftw_mpi_c2c_gaussian_3d PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c2c
-)
-
-add_executable(test_fftw_mpi_c2c_gaussian_2d c2c/test_fftw_mpi_c2c_gaussian_2d.cpp)
-target_link_libraries(test_fftw_mpi_c2c_gaussian_2d parafaft::parafaft)
-set_target_properties(test_fftw_mpi_c2c_gaussian_2d PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c2c
-)
-
-add_executable(test_fftw_mpi_c2c_gaussian_4d c2c/test_fftw_mpi_c2c_gaussian_4d.cpp)
-target_link_libraries(test_fftw_mpi_c2c_gaussian_4d parafaft::parafaft)
-set_target_properties(test_fftw_mpi_c2c_gaussian_4d PROPERTIES
+add_executable(test_fftw_mpi_c2c_gaussian_nd c2c/test_fftw_mpi_c2c_gaussian_nd.cpp)
+target_link_libraries(test_fftw_mpi_c2c_gaussian_nd parafaft::parafaft)
+set_target_properties(test_fftw_mpi_c2c_gaussian_nd PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c2c
 )
 
@@ -111,21 +99,9 @@ if(PARAFAFT_CUDA)
     endif()
 
     # C2C MPI Tests
-    add_executable(test_cufft_mpi_c2c_gaussian_2d c2c/test_cufft_mpi_c2c_gaussian_2d.cu)
-    target_link_libraries(test_cufft_mpi_c2c_gaussian_2d parafaft::parafaft)
-    set_target_properties(test_cufft_mpi_c2c_gaussian_2d PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c2c
-    )
-
-    add_executable(test_cufft_mpi_c2c_gaussian_3d c2c/test_cufft_mpi_c2c_gaussian_3d.cu)
-    target_link_libraries(test_cufft_mpi_c2c_gaussian_3d parafaft::parafaft)
-    set_target_properties(test_cufft_mpi_c2c_gaussian_3d PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c2c
-    )
-
-    add_executable(test_cufft_mpi_c2c_gaussian_4d c2c/test_cufft_mpi_c2c_gaussian_4d.cu)
-    target_link_libraries(test_cufft_mpi_c2c_gaussian_4d parafaft::parafaft)
-    set_target_properties(test_cufft_mpi_c2c_gaussian_4d PROPERTIES
+    add_executable(test_cufft_mpi_c2c_gaussian_nd c2c/test_cufft_mpi_c2c_gaussian_nd.cu)
+    target_link_libraries(test_cufft_mpi_c2c_gaussian_nd parafaft::parafaft)
+    set_target_properties(test_cufft_mpi_c2c_gaussian_nd PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c2c
     )
 
@@ -186,21 +162,9 @@ endif()
 
 if(PARAFAFT_HIP)
     # C2C MPI Tests
-    add_executable(test_hipfft_mpi_c2c_gaussian_2d c2c/test_hipfft_mpi_c2c_gaussian_2d.hip)
-    target_link_libraries(test_hipfft_mpi_c2c_gaussian_2d parafaft::parafaft)
-    set_target_properties(test_hipfft_mpi_c2c_gaussian_2d PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c2c
-    )
-
-    add_executable(test_hipfft_mpi_c2c_gaussian_3d c2c/test_hipfft_mpi_c2c_gaussian_3d.hip)
-    target_link_libraries(test_hipfft_mpi_c2c_gaussian_3d parafaft::parafaft)
-    set_target_properties(test_hipfft_mpi_c2c_gaussian_3d PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c2c
-    )
-
-    add_executable(test_hipfft_mpi_c2c_gaussian_4d c2c/test_hipfft_mpi_c2c_gaussian_4d.hip)
-    target_link_libraries(test_hipfft_mpi_c2c_gaussian_4d parafaft::parafaft)
-    set_target_properties(test_hipfft_mpi_c2c_gaussian_4d PROPERTIES
+    add_executable(test_hipfft_mpi_c2c_gaussian_nd c2c/test_hipfft_mpi_c2c_gaussian_nd.hip)
+    target_link_libraries(test_hipfft_mpi_c2c_gaussian_nd parafaft::parafaft)
+    set_target_properties(test_hipfft_mpi_c2c_gaussian_nd PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c2c
     )
 
@@ -342,6 +306,30 @@ function(add_mpi_tests_varN test_name test_file test_build)
     set_tests_properties(${test_name}_np4_N64 PROPERTIES DEPENDS ${test_build})
 endfunction()
 
+function(add_mpi_tests_varN_varD test_name test_file test_build)
+    # 2D tests
+    add_test(NAME ${test_name}_np1_N32_D2 COMMAND mpirun -np 1 ${CMAKE_BINARY_DIR}/${test_file} 32 2)
+    add_test(NAME ${test_name}_np4_N32_D2 COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/${test_file} 32 2)
+    # 3D tests
+    add_test(NAME ${test_name}_np1_N32_D3 COMMAND mpirun -np 1 ${CMAKE_BINARY_DIR}/${test_file} 32 3)
+    add_test(NAME ${test_name}_np4_N32_D3 COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/${test_file} 32 3)
+    # 4D tests (smaller N)
+    add_test(NAME ${test_name}_np1_N16_D4 COMMAND mpirun -np 1 ${CMAKE_BINARY_DIR}/${test_file} 16 4)
+    add_test(NAME ${test_name}_np4_N16_D4 COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/${test_file} 16 4)
+    # 5D tests (even smaller N)
+    add_test(NAME ${test_name}_np1_N8_D5 COMMAND mpirun -np 1 ${CMAKE_BINARY_DIR}/${test_file} 8 5)
+    add_test(NAME ${test_name}_np4_N8_D5 COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/${test_file} 8 5)
+    # Dependencies
+    set_tests_properties(${test_name}_np1_N32_D2 PROPERTIES DEPENDS ${test_build})
+    set_tests_properties(${test_name}_np4_N32_D2 PROPERTIES DEPENDS ${test_build})
+    set_tests_properties(${test_name}_np1_N32_D3 PROPERTIES DEPENDS ${test_build})
+    set_tests_properties(${test_name}_np4_N32_D3 PROPERTIES DEPENDS ${test_build})
+    set_tests_properties(${test_name}_np1_N16_D4 PROPERTIES DEPENDS ${test_build})
+    set_tests_properties(${test_name}_np4_N16_D4 PROPERTIES DEPENDS ${test_build})
+    set_tests_properties(${test_name}_np1_N8_D5 PROPERTIES DEPENDS ${test_build})
+    set_tests_properties(${test_name}_np4_N8_D5 PROPERTIES DEPENDS ${test_build})
+endfunction()
+
 # Add tests to CTest
 add_serial_tests(fftw_unit_backend unit/test_fftw_backend test_fftw_backend)
 
@@ -350,9 +338,7 @@ add_mpi_tests(fftw_c2c_constant_32 c2c/test_fftw_mpi_constant_32 test_fftw_mpi_c
 add_mpi_tests(fftw_c2c_8cubed c2c/test_fftw_mpi_8cubed test_fftw_mpi_8cubed)
 add_mpi_tests(fftw_c2c_4d_roundtrip c2c/test_fftw_mpi_4d_roundtrip test_fftw_mpi_4d_roundtrip)
 add_mpi_tests_varN(fftw_c2c_gaussian_roundtrip c2c/test_fftw_mpi_c2c_gaussian_roundtrip test_fftw_mpi_c2c_gaussian_roundtrip)
-add_mpi_tests_varN(fftw_c2c_gaussian_2d c2c/test_fftw_mpi_c2c_gaussian_2d test_fftw_mpi_c2c_gaussian_2d)
-add_mpi_tests_varN(fftw_c2c_gaussian_3d c2c/test_fftw_mpi_c2c_gaussian_3d test_fftw_mpi_c2c_gaussian_3d)
-add_mpi_tests_varN(fftw_c2c_gaussian_4d c2c/test_fftw_mpi_c2c_gaussian_4d test_fftw_mpi_c2c_gaussian_4d)
+add_mpi_tests_varN_varD(fftw_c2c_gaussian_nd c2c/test_fftw_mpi_c2c_gaussian_nd test_fftw_mpi_c2c_gaussian_nd)
 
 add_mpi_tests_varN(fftw_r2c_gaussian_2d r2c/test_fftw_mpi_r2c_gaussian_2d test_fftw_mpi_r2c_gaussian_2d)
 add_mpi_tests_varN(fftw_r2c_gaussian_3d r2c/test_fftw_mpi_r2c_gaussian_3d test_fftw_mpi_r2c_gaussian_3d)
@@ -368,9 +354,7 @@ if(PARAFAFT_CUDA)
     add_serial_tests(cufft_unit_backend unit/test_cufft_backend test_cufft_backend)
     add_serial_tests(cufft_unit_cuvector unit/test_cuvector test_cuvector)
 
-    add_mpi_tests_varN(cufft_c2c_gaussian_2d c2c/test_cufft_mpi_c2c_gaussian_2d test_cufft_mpi_c2c_gaussian_2d)
-    add_mpi_tests_varN(cufft_c2c_gaussian_3d c2c/test_cufft_mpi_c2c_gaussian_3d test_cufft_mpi_c2c_gaussian_3d)
-    add_mpi_tests_varN(cufft_c2c_gaussian_4d c2c/test_cufft_mpi_c2c_gaussian_4d test_cufft_mpi_c2c_gaussian_4d)
+    add_mpi_tests_varN_varD(cufft_c2c_gaussian_nd c2c/test_cufft_mpi_c2c_gaussian_nd test_cufft_mpi_c2c_gaussian_nd)
 
     add_mpi_tests_varN(cufft_r2c_gaussian_2d r2c/test_cufft_mpi_r2c_gaussian_2d test_cufft_mpi_r2c_gaussian_2d)
     add_mpi_tests_varN(cufft_r2c_gaussian_3d r2c/test_cufft_mpi_r2c_gaussian_3d test_cufft_mpi_r2c_gaussian_3d)
@@ -385,9 +369,7 @@ if(PARAFAFT_HIP)
     add_serial_tests(hipfft_unit_backend unit/test_hipfft_backend test_hipfft_backend)
     add_serial_tests(hipfft_unit_hipvector unit/test_hipvector test_hipvector)
 
-    add_mpi_tests_varN(hipfft_c2c_gaussian_2d c2c/test_hipfft_mpi_c2c_gaussian_2d test_hipfft_mpi_c2c_gaussian_2d)
-    add_mpi_tests_varN(hipfft_c2c_gaussian_3d c2c/test_hipfft_mpi_c2c_gaussian_3d test_hipfft_mpi_c2c_gaussian_3d)
-    add_mpi_tests_varN(hipfft_c2c_gaussian_4d c2c/test_hipfft_mpi_c2c_gaussian_4d test_hipfft_mpi_c2c_gaussian_4d)
+    add_mpi_tests_varN_varD(hipfft_c2c_gaussian_nd c2c/test_hipfft_mpi_c2c_gaussian_nd test_hipfft_mpi_c2c_gaussian_nd)
 
     add_mpi_tests_varN(hipfft_r2c_gaussian_2d r2c/test_hipfft_mpi_r2c_gaussian_2d test_hipfft_mpi_r2c_gaussian_2d)
     add_mpi_tests_varN(hipfft_r2c_gaussian_3d r2c/test_hipfft_mpi_r2c_gaussian_3d test_hipfft_mpi_r2c_gaussian_3d)
