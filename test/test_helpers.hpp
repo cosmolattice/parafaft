@@ -30,6 +30,8 @@
 #include <hip/hip_runtime.h>
 #endif
 
+#include <algorithm>
+
 namespace parafaft_test
 {
 
@@ -289,6 +291,518 @@ namespace parafaft_test
   }
 
 #endif // hipFFT helpers
+
+  // ==========================================================================
+  // R2C helpers
+  // ==========================================================================
+
+  // --------------------------------------------------------------------------
+  // Flat-index for R2C real data in row-major order (NON-PADDED layout).
+  // All dimensions use their natural shape; last dim stride is shape[D-1].
+  // --------------------------------------------------------------------------
+  template <int D> inline int nd_index_real(const std::array<int, D> &idx, const int shape[D])
+  {
+    int flat = idx[0];
+    for (int d = 1; d < D; ++d)
+      flat = flat * shape[d] + idx[d];
+    return flat;
+  }
+
+  // --------------------------------------------------------------------------
+  // Flat-index for R2C real data in row-major order (PADDED layout).
+  // The last dimension has stride (shape[D-1] + 2) to accommodate in-place R2C.
+  // --------------------------------------------------------------------------
+  template <int D> inline int nd_index_real_padded(const std::array<int, D> &idx, const int shape[D])
+  {
+    const int padded_last = shape[D - 1] + 2;
+    int flat = idx[0];
+    for (int d = 1; d < D - 1; ++d)
+      flat = flat * shape[d] + idx[d];
+    flat = flat * padded_last + idx[D - 1];
+    return flat;
+  }
+
+  // --------------------------------------------------------------------------
+  // Flat-index for R2C complex output in row-major order.
+  // shape_complex[d] = shape_real[d] for d < D-1, and N_{D-1}/2+1 for last dim.
+  // --------------------------------------------------------------------------
+  template <int D> inline int nd_index_complex(const std::array<int, D> &idx, const int complex_shape[D])
+  {
+    int flat = idx[0];
+    for (int d = 1; d < D; ++d)
+      flat = flat * complex_shape[d] + idx[d];
+    return flat;
+  }
+
+  // --------------------------------------------------------------------------
+  // Generate a D-dimensional Gaussian for R2C (NON-PADDED, out-of-place).
+  // Allocates enough for the complex output: product(N, ..., N, (N/2+1)) * 2.
+  // Fills only the real part (N^D entries).
+  // --------------------------------------------------------------------------
+  template <int D> std::vector<double> generate_gaussian_r2c_nd(int N, double sigma)
+  {
+    // Total real elements
+    int real_total = 1;
+    for (int d = 0; d < D; ++d)
+      real_total *= N;
+
+    // Complex output total (doubles)
+    int complex_doubles = 1;
+    for (int d = 0; d < D - 1; ++d)
+      complex_doubles *= N;
+    complex_doubles *= (N / 2 + 1) * 2;
+
+    // Allocate max of both (complex output >= real for even N)
+    const int total_size = std::max(real_total, complex_doubles);
+    std::vector<double> data(total_size, 0.0);
+
+    std::array<int, D> shape;
+    shape.fill(N);
+    const double center = N / 2.0;
+
+    iterate_nd<D>(shape.data(), [&](const std::array<int, D> &idx) {
+      double r2 = 0.0;
+      for (int d = 0; d < D; ++d) {
+        double x = idx[d] - center;
+        r2 += x * x;
+      }
+      int flat = nd_index_real<D>(idx, shape.data());
+      data[flat] = std::exp(-r2 / (2.0 * sigma * sigma));
+    });
+
+    return data;
+  }
+
+  // --------------------------------------------------------------------------
+  // Generate a D-dimensional Gaussian for R2C (PADDED, in-place).
+  // The last dimension has stride (N+2).
+  // Total allocation: product(N, ..., N_{D-2}, N+2).
+  // --------------------------------------------------------------------------
+  template <int D> std::vector<double> generate_gaussian_r2c_padded_nd(int N, double sigma)
+  {
+    int total_size = 1;
+    for (int d = 0; d < D - 1; ++d)
+      total_size *= N;
+    total_size *= (N + 2);
+
+    std::vector<double> data(total_size, 0.0);
+
+    std::array<int, D> shape;
+    shape.fill(N);
+    const double center = N / 2.0;
+
+    iterate_nd<D>(shape.data(), [&](const std::array<int, D> &idx) {
+      double r2 = 0.0;
+      for (int d = 0; d < D; ++d) {
+        double x = idx[d] - center;
+        r2 += x * x;
+      }
+      int flat = nd_index_real_padded<D>(idx, shape.data());
+      data[flat] = std::exp(-r2 / (2.0 * sigma * sigma));
+    });
+
+    return data;
+  }
+
+  // --------------------------------------------------------------------------
+  // Serial FFTW forward R2C transform on D-dimensional data (out-of-place).
+  // Input: real data in host_data (N^D entries, contiguous row-major).
+  // Output: complex data written back into host_data (reinterpreted).
+  // Caller must ensure host_data has enough room for complex output.
+  // --------------------------------------------------------------------------
+  template <int D> void fftw_r2c_reference_nd(double *host_data, int N)
+  {
+    // Copy real data out
+    int real_total = 1;
+    for (int d = 0; d < D; ++d)
+      real_total *= N;
+
+    std::vector<double> temp(real_total);
+    std::copy(host_data, host_data + real_total, temp.data());
+
+    // Compute complex output size (in doubles)
+    int complex_doubles = 1;
+    for (int d = 0; d < D - 1; ++d)
+      complex_doubles *= N;
+    complex_doubles *= (N + 2); // (N/2+1) complex entries = (N+2) doubles in last dim
+
+    std::fill(host_data, host_data + complex_doubles, 0.0);
+
+    std::array<int, D> n;
+    n.fill(N);
+
+    fftw_plan plan =
+        fftw_plan_dft_r2c(D, n.data(), temp.data(), reinterpret_cast<fftw_complex *>(host_data), FFTW_ESTIMATE);
+    fftw_execute(plan);
+    fftw_destroy_plan(plan);
+  }
+
+  // --------------------------------------------------------------------------
+  // Serial FFTW forward R2C transform on D-dimensional PADDED data (in-place).
+  // The last dimension already has stride (N+2).
+  // --------------------------------------------------------------------------
+  template <int D> void fftw_r2c_reference_padded_nd(double *host_data, int N)
+  {
+    std::array<int, D> n;
+    n.fill(N);
+
+    fftw_plan plan =
+        fftw_plan_dft_r2c(D, n.data(), host_data, reinterpret_cast<fftw_complex *>(host_data), FFTW_ESTIMATE);
+    fftw_execute(plan);
+    fftw_destroy_plan(plan);
+  }
+
+  // --------------------------------------------------------------------------
+  // Compute the global complex shape for an R2C transform of a hypercubic grid.
+  // All dimensions stay N except the last, which becomes N/2+1.
+  // --------------------------------------------------------------------------
+  template <int D> std::array<int, D> r2c_complex_shape(int N)
+  {
+    std::array<int, D> s;
+    s.fill(N);
+    s[D - 1] = N / 2 + 1;
+    return s;
+  }
+
+  // --------------------------------------------------------------------------
+  // cuFFT serial R2C reference helpers (D = 2, 3 only).
+  // --------------------------------------------------------------------------
+#if defined(__CUDACC__) || defined(__CUDA_ARCH__) || defined(__NVCC__)
+
+  // Out-of-place cuFFT R2C reference
+  inline void cufft_r2c_reference_2d(double *host_data, int N0, int N1)
+  {
+    const int real_size = N0 * N1;
+    const int complex_size = N0 * (N1 / 2 + 1);
+
+    cufftDoubleReal *d_real = nullptr;
+    cufftDoubleComplex *d_complex = nullptr;
+    cudaMalloc((void **)&d_real, real_size * sizeof(cufftDoubleReal));
+    cudaMalloc((void **)&d_complex, complex_size * sizeof(cufftDoubleComplex));
+    cudaMemcpy(d_real, host_data, real_size * sizeof(cufftDoubleReal), cudaMemcpyHostToDevice);
+
+    cufftHandle plan;
+    cufftPlan2d(&plan, N0, N1, CUFFT_D2Z);
+    cufftExecD2Z(plan, d_real, d_complex);
+    cufftDestroy(plan);
+
+    cudaMemcpy(host_data, d_complex, complex_size * sizeof(cufftDoubleComplex), cudaMemcpyDeviceToHost);
+    cudaFree(d_real);
+    cudaFree(d_complex);
+  }
+
+  inline void cufft_r2c_reference_3d(double *host_data, int N0, int N1, int N2)
+  {
+    const int real_size = N0 * N1 * N2;
+    const int complex_size = N0 * N1 * (N2 / 2 + 1);
+
+    cufftDoubleReal *d_real = nullptr;
+    cufftDoubleComplex *d_complex = nullptr;
+    cudaMalloc((void **)&d_real, real_size * sizeof(cufftDoubleReal));
+    cudaMalloc((void **)&d_complex, complex_size * sizeof(cufftDoubleComplex));
+    cudaMemcpy(d_real, host_data, real_size * sizeof(cufftDoubleReal), cudaMemcpyHostToDevice);
+
+    cufftHandle plan;
+    cufftPlan3d(&plan, N0, N1, N2, CUFFT_D2Z);
+    cufftExecD2Z(plan, d_real, d_complex);
+    cufftDestroy(plan);
+
+    cudaMemcpy(host_data, d_complex, complex_size * sizeof(cufftDoubleComplex), cudaMemcpyDeviceToHost);
+    cudaFree(d_real);
+    cudaFree(d_complex);
+  }
+
+  // In-place cuFFT R2C reference (padded layout)
+  inline void cufft_r2c_reference_padded_2d(double *host_data, int N0, int N1)
+  {
+    const int total_size = N0 * (N1 / 2 + 1);
+    cufftDoubleComplex *d_data = nullptr;
+    cudaMalloc((void **)&d_data, total_size * sizeof(cufftDoubleComplex));
+    cudaMemcpy(d_data, host_data, total_size * sizeof(cufftDoubleComplex), cudaMemcpyHostToDevice);
+
+    cufftHandle plan;
+    cufftPlan2d(&plan, N0, N1, CUFFT_D2Z);
+    cufftExecD2Z(plan, reinterpret_cast<cufftDoubleReal *>(d_data), reinterpret_cast<cufftDoubleComplex *>(d_data));
+    cufftDestroy(plan);
+
+    cudaMemcpy(host_data, d_data, total_size * sizeof(cufftDoubleComplex), cudaMemcpyDeviceToHost);
+    cudaFree(d_data);
+  }
+
+  inline void cufft_r2c_reference_padded_3d(double *host_data, int N0, int N1, int N2)
+  {
+    const int total_size = N0 * N1 * (N2 / 2 + 1);
+    cufftDoubleComplex *d_data = nullptr;
+    cudaMalloc((void **)&d_data, total_size * sizeof(cufftDoubleComplex));
+    cudaMemcpy(d_data, host_data, total_size * sizeof(cufftDoubleComplex), cudaMemcpyHostToDevice);
+
+    cufftHandle plan;
+    cufftPlan3d(&plan, N0, N1, N2, CUFFT_D2Z);
+    cufftExecD2Z(plan, reinterpret_cast<cufftDoubleReal *>(d_data), reinterpret_cast<cufftDoubleComplex *>(d_data));
+    cufftDestroy(plan);
+
+    cudaMemcpy(host_data, d_data, total_size * sizeof(cufftDoubleComplex), cudaMemcpyDeviceToHost);
+    cudaFree(d_data);
+  }
+
+  /// cuFFT-vs-FFTW R2C sanity check (out-of-place). D = 2 or 3 only.
+  template <int D> int compare_cufft_vs_fftw_r2c(int N, int rank)
+  {
+    static_assert(D == 2 || D == 3, "cuFFT R2C library reference only available for D=2,3");
+    if (rank != 0) return 0;
+
+    std::cout << "\n==========================================" << std::endl;
+    std::cout << "Sanity check: Comparing (sequential) FFTW and cuFFT for " << D << "D R2C transform of size ";
+    std::array<int, D> s;
+    s.fill(N);
+    print_shape<D>(std::cout, s.data());
+    std::cout << std::endl;
+
+    auto fftw_ref = generate_gaussian_r2c_nd<D>(N, 4.0);
+    auto cufft_ref = fftw_ref;
+
+    fftw_r2c_reference_nd<D>(fftw_ref.data(), N);
+
+    if (D == 2)
+      cufft_r2c_reference_2d(cufft_ref.data(), N, N);
+    else
+      cufft_r2c_reference_3d(cufft_ref.data(), N, N, N);
+
+    auto gcs = r2c_complex_shape<D>(N);
+    int complex_total = 1;
+    for (int d = 0; d < D; ++d)
+      complex_total *= gcs[d];
+
+    double max_error = 0.0;
+    std::complex<double> *fc = reinterpret_cast<std::complex<double> *>(fftw_ref.data());
+    std::complex<double> *cc = reinterpret_cast<std::complex<double> *>(cufft_ref.data());
+    for (int i = 0; i < complex_total; ++i) {
+      double err = std::abs(fc[i] - cc[i]);
+      if (err > max_error) max_error = err;
+    }
+
+    if (max_error < 1e-10) {
+      std::cout << "Test passed: FFTW and cuFFT produce identical results." << std::endl;
+      std::cout << "Maximum error: " << max_error << std::endl;
+      return 0;
+    } else {
+      std::cout << "Test failed: FFTW and cuFFT produce different results." << std::endl;
+      std::cout << "Maximum error: " << max_error << std::endl;
+      return 1;
+    }
+  }
+
+  /// cuFFT-vs-FFTW R2C sanity check (padded/in-place). D = 2 or 3 only.
+  template <int D> int compare_cufft_vs_fftw_r2c_padded(int N, int rank)
+  {
+    static_assert(D == 2 || D == 3, "cuFFT R2C padded library reference only available for D=2,3");
+    if (rank != 0) return 0;
+
+    std::cout << "\n==========================================" << std::endl;
+    std::cout << "Sanity check: Comparing (sequential) FFTW and cuFFT for " << D << "D padded R2C transform of size ";
+    std::array<int, D> s;
+    s.fill(N);
+    print_shape<D>(std::cout, s.data());
+    std::cout << std::endl;
+
+    auto fftw_ref = generate_gaussian_r2c_padded_nd<D>(N, 4.0);
+    auto cufft_ref = fftw_ref;
+
+    fftw_r2c_reference_padded_nd<D>(fftw_ref.data(), N);
+
+    if (D == 2)
+      cufft_r2c_reference_padded_2d(cufft_ref.data(), N, N);
+    else
+      cufft_r2c_reference_padded_3d(cufft_ref.data(), N, N, N);
+
+    double max_error = 0.0;
+    for (size_t i = 0; i < fftw_ref.size(); ++i) {
+      double err = std::abs(fftw_ref[i] - cufft_ref[i]);
+      if (err > max_error) max_error = err;
+    }
+
+    if (max_error < 1e-10) {
+      std::cout << "Test passed: FFTW and cuFFT produce identical results." << std::endl;
+      std::cout << "Maximum error: " << max_error << std::endl;
+      return 0;
+    } else {
+      std::cout << "Test failed: FFTW and cuFFT produce different results." << std::endl;
+      std::cout << "Maximum error: " << max_error << std::endl;
+      return 1;
+    }
+  }
+
+#endif // cuFFT R2C helpers
+
+  // --------------------------------------------------------------------------
+  // hipFFT serial R2C reference helpers (D = 2, 3 only).
+  // --------------------------------------------------------------------------
+#if defined(__HIP_PLATFORM_AMD__) || defined(__HIP_PLATFORM_HCC__) || defined(__HIPCC__)
+
+  // Out-of-place hipFFT R2C reference
+  inline void hipfft_r2c_reference_2d(double *host_data, int N0, int N1)
+  {
+    const int real_size = N0 * N1;
+    const int complex_size = N0 * (N1 / 2 + 1);
+
+    hipfftDoubleReal *d_real = nullptr;
+    hipfftDoubleComplex *d_complex = nullptr;
+    hipMalloc((void **)&d_real, real_size * sizeof(hipfftDoubleReal));
+    hipMalloc((void **)&d_complex, complex_size * sizeof(hipfftDoubleComplex));
+    hipMemcpy(d_real, host_data, real_size * sizeof(hipfftDoubleReal), hipMemcpyHostToDevice);
+
+    hipfftHandle plan;
+    hipfftPlan2d(&plan, N0, N1, HIPFFT_D2Z);
+    hipfftExecD2Z(plan, d_real, d_complex);
+    hipfftDestroy(plan);
+
+    hipMemcpy(host_data, d_complex, complex_size * sizeof(hipfftDoubleComplex), hipMemcpyDeviceToHost);
+    hipFree(d_real);
+    hipFree(d_complex);
+  }
+
+  inline void hipfft_r2c_reference_3d(double *host_data, int N0, int N1, int N2)
+  {
+    const int real_size = N0 * N1 * N2;
+    const int complex_size = N0 * N1 * (N2 / 2 + 1);
+
+    hipfftDoubleReal *d_real = nullptr;
+    hipfftDoubleComplex *d_complex = nullptr;
+    hipMalloc((void **)&d_real, real_size * sizeof(hipfftDoubleReal));
+    hipMalloc((void **)&d_complex, complex_size * sizeof(hipfftDoubleComplex));
+    hipMemcpy(d_real, host_data, real_size * sizeof(hipfftDoubleReal), hipMemcpyHostToDevice);
+
+    hipfftHandle plan;
+    hipfftPlan3d(&plan, N0, N1, N2, HIPFFT_D2Z);
+    hipfftExecD2Z(plan, d_real, d_complex);
+    hipfftDestroy(plan);
+
+    hipMemcpy(host_data, d_complex, complex_size * sizeof(hipfftDoubleComplex), hipMemcpyDeviceToHost);
+    hipFree(d_real);
+    hipFree(d_complex);
+  }
+
+  // In-place hipFFT R2C reference (padded layout)
+  inline void hipfft_r2c_reference_padded_2d(double *host_data, int N0, int N1)
+  {
+    const int total_size = N0 * (N1 / 2 + 1);
+    hipfftDoubleComplex *d_data = nullptr;
+    hipMalloc((void **)&d_data, total_size * sizeof(hipfftDoubleComplex));
+    hipMemcpy(d_data, host_data, total_size * sizeof(hipfftDoubleComplex), hipMemcpyHostToDevice);
+
+    hipfftHandle plan;
+    hipfftPlan2d(&plan, N0, N1, HIPFFT_D2Z);
+    hipfftExecD2Z(plan, reinterpret_cast<hipfftDoubleReal *>(d_data), reinterpret_cast<hipfftDoubleComplex *>(d_data));
+    hipfftDestroy(plan);
+
+    hipMemcpy(host_data, d_data, total_size * sizeof(hipfftDoubleComplex), hipMemcpyDeviceToHost);
+    hipFree(d_data);
+  }
+
+  inline void hipfft_r2c_reference_padded_3d(double *host_data, int N0, int N1, int N2)
+  {
+    const int total_size = N0 * N1 * (N2 / 2 + 1);
+    hipfftDoubleComplex *d_data = nullptr;
+    hipMalloc((void **)&d_data, total_size * sizeof(hipfftDoubleComplex));
+    hipMemcpy(d_data, host_data, total_size * sizeof(hipfftDoubleComplex), hipMemcpyHostToDevice);
+
+    hipfftHandle plan;
+    hipfftPlan3d(&plan, N0, N1, N2, HIPFFT_D2Z);
+    hipfftExecD2Z(plan, reinterpret_cast<hipfftDoubleReal *>(d_data), reinterpret_cast<hipfftDoubleComplex *>(d_data));
+    hipfftDestroy(plan);
+
+    hipMemcpy(host_data, d_data, total_size * sizeof(hipfftDoubleComplex), hipMemcpyDeviceToHost);
+    hipFree(d_data);
+  }
+
+  /// hipFFT-vs-FFTW R2C sanity check (out-of-place). D = 2 or 3 only.
+  template <int D> int compare_hipfft_vs_fftw_r2c(int N, int rank)
+  {
+    static_assert(D == 2 || D == 3, "hipFFT R2C library reference only available for D=2,3");
+    if (rank != 0) return 0;
+
+    std::cout << "\n==========================================" << std::endl;
+    std::cout << "Sanity check: Comparing (sequential) FFTW and hipFFT for " << D << "D R2C transform of size ";
+    std::array<int, D> s;
+    s.fill(N);
+    print_shape<D>(std::cout, s.data());
+    std::cout << std::endl;
+
+    auto fftw_ref = generate_gaussian_r2c_nd<D>(N, 4.0);
+    auto hipfft_ref = fftw_ref;
+
+    fftw_r2c_reference_nd<D>(fftw_ref.data(), N);
+
+    if (D == 2)
+      hipfft_r2c_reference_2d(hipfft_ref.data(), N, N);
+    else
+      hipfft_r2c_reference_3d(hipfft_ref.data(), N, N, N);
+
+    auto gcs = r2c_complex_shape<D>(N);
+    int complex_total = 1;
+    for (int d = 0; d < D; ++d)
+      complex_total *= gcs[d];
+
+    double max_error = 0.0;
+    std::complex<double> *fc = reinterpret_cast<std::complex<double> *>(fftw_ref.data());
+    std::complex<double> *hc = reinterpret_cast<std::complex<double> *>(hipfft_ref.data());
+    for (int i = 0; i < complex_total; ++i) {
+      double err = std::abs(fc[i] - hc[i]);
+      if (err > max_error) max_error = err;
+    }
+
+    if (max_error < 1e-10) {
+      std::cout << "Test passed: FFTW and hipFFT produce identical results." << std::endl;
+      std::cout << "Maximum error: " << max_error << std::endl;
+      return 0;
+    } else {
+      std::cout << "Test failed: FFTW and hipFFT produce different results." << std::endl;
+      std::cout << "Maximum error: " << max_error << std::endl;
+      return 1;
+    }
+  }
+
+  /// hipFFT-vs-FFTW R2C sanity check (padded/in-place). D = 2 or 3 only.
+  template <int D> int compare_hipfft_vs_fftw_r2c_padded(int N, int rank)
+  {
+    static_assert(D == 2 || D == 3, "hipFFT R2C padded library reference only available for D=2,3");
+    if (rank != 0) return 0;
+
+    std::cout << "\n==========================================" << std::endl;
+    std::cout << "Sanity check: Comparing (sequential) FFTW and hipFFT for " << D << "D padded R2C transform of size ";
+    std::array<int, D> s;
+    s.fill(N);
+    print_shape<D>(std::cout, s.data());
+    std::cout << std::endl;
+
+    auto fftw_ref = generate_gaussian_r2c_padded_nd<D>(N, 4.0);
+    auto hipfft_ref = fftw_ref;
+
+    fftw_r2c_reference_padded_nd<D>(fftw_ref.data(), N);
+
+    if (D == 2)
+      hipfft_r2c_reference_padded_2d(hipfft_ref.data(), N, N);
+    else
+      hipfft_r2c_reference_padded_3d(hipfft_ref.data(), N, N, N);
+
+    double max_error = 0.0;
+    for (size_t i = 0; i < fftw_ref.size(); ++i) {
+      double err = std::abs(fftw_ref[i] - hipfft_ref[i]);
+      if (err > max_error) max_error = err;
+    }
+
+    if (max_error < 1e-10) {
+      std::cout << "Test passed: FFTW and hipFFT produce identical results." << std::endl;
+      std::cout << "Maximum error: " << max_error << std::endl;
+      return 0;
+    } else {
+      std::cout << "Test failed: FFTW and hipFFT produce different results." << std::endl;
+      std::cout << "Maximum error: " << max_error << std::endl;
+      return 1;
+    }
+  }
+
+#endif // hipFFT R2C helpers
 
 } // namespace parafaft_test
 
