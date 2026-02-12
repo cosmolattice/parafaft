@@ -1,10 +1,11 @@
 // ============================================================================
 // Generalized N-dimensional C2C Gaussian roundtrip test for parafaft (FFTW).
 //
-// Usage:  mpirun -np <P> ./test_fftw_mpi_c2c_roundtrip_nd [N] [D]
+// Usage:  mpirun -np <P> ./test_fftw_mpi_c2c_roundtrip_nd [N] [D] [S]
 //
 //   N  – grid side length (default 32, or 16 when D >= 4)
 //   D  – number of dimensions (default 3, range 2..6)
+//   S  – shape: 0=Gaussian, 1=StepFunction, 2=RandomPolynomial (default 0)
 //
 // The test generates a D-dimensional Gaussian on an N^D hypercubic grid,
 // performs forward + backward C2C transforms with parafaft (MPI-distributed,
@@ -23,7 +24,7 @@
 // ============================================================================
 // Templated roundtrip test – works for any D.
 // ============================================================================
-template <int D> int roundtrip_test(const int N, int rank)
+template <int D> int roundtrip_test(const int N, int rank, int shape_id)
 {
   using namespace parafaft_test;
 
@@ -33,7 +34,7 @@ template <int D> int roundtrip_test(const int N, int rank)
     std::array<int, D> s;
     s.fill(N);
     print_shape<D>(std::cout, s.data());
-    std::cout << std::endl;
+    std::cout << " [shape=" << shape_name(shape_id) << "]" << std::endl;
   }
 
   // ---- ParaFaFT setup -------------------------------------------------------
@@ -47,20 +48,15 @@ template <int D> int roundtrip_test(const int N, int rank)
   fft.get_local_shape(local_shape);
   fft.get_global_start(global_start);
 
-  // ---- Generate local portion of Gaussian -----------------------------------
-  const double sigma = 4.0;
-  const double center = N / 2.0;
-
+  // ---- Generate local portion of data ----------------------------------------
   std::vector<std::complex<double>> data(local_size);
   std::vector<std::complex<double>> original(local_size);
 
   iterate_nd<D>(local_shape, [&](const std::array<int, D> &lidx) {
-    double r2 = 0.0;
-    for (int d = 0; d < D; ++d) {
-      double x = (global_start[d] + lidx[d]) - center;
-      r2 += x * x;
-    }
-    double value = std::exp(-r2 / (2.0 * sigma * sigma));
+    std::array<int, D> gidx;
+    for (int d = 0; d < D; ++d)
+      gidx[d] = global_start[d] + lidx[d];
+    double value = point_value<D>(gidx, N, shape_id);
     int flat = nd_index<D>(lidx.data(), local_shape);
     data[flat] = std::complex<double>(value, 0.0);
     original[flat] = data[flat];
@@ -110,19 +106,21 @@ template <int D> int roundtrip_test(const int N, int rank)
 // ============================================================================
 // Dispatch
 // ============================================================================
-int dispatch(int D, int N, int rank)
+int dispatch(int D, int N, int rank, int shape_id)
 {
   switch (D) {
+  case 1:
+    return roundtrip_test<1>(N, rank, shape_id);
   case 2:
-    return roundtrip_test<2>(N, rank);
+    return roundtrip_test<2>(N, rank, shape_id);
   case 3:
-    return roundtrip_test<3>(N, rank);
+    return roundtrip_test<3>(N, rank, shape_id);
   case 4:
-    return roundtrip_test<4>(N, rank);
+    return roundtrip_test<4>(N, rank, shape_id);
   case 5:
-    return roundtrip_test<5>(N, rank);
+    return roundtrip_test<5>(N, rank, shape_id);
   case 6:
-    return roundtrip_test<6>(N, rank);
+    return roundtrip_test<6>(N, rank, shape_id);
   default:
     if (rank == 0) std::cerr << "Unsupported dimensionality D=" << D << " (supported: 2..6)" << std::endl;
     return 1;
@@ -141,20 +139,28 @@ int main(int argc, char **argv)
 
   int D = 3;
   int N = -1;
+  int S = 0;
 
   if (argc > 1) N = std::atoi(argv[1]);
   if (argc > 2) D = std::atoi(argv[2]);
+  if (argc > 3) S = std::atoi(argv[3]);
+
+  if (D == 1 && size > 1) {
+    if (rank == 0) std::cerr << "Error: D=1 test cannot be run with multiple processes." << std::endl;
+    MPI_Finalize();
+    return 1;
+  }
 
   if (N <= 0) N = (D >= 4) ? 16 : 32;
 
   if (rank == 0) {
     std::cout << "########################################" << std::endl;
     std::cout << "# TEST: c2c/fftw_mpi_c2c_roundtrip_nd" << std::endl;
-    std::cout << "# D = " << D << ",  N = " << N << std::endl;
+    std::cout << "# D = " << D << ",  N = " << N << ",  S = " << parafaft_test::shape_name(S) << std::endl;
     std::cout << "########################################" << std::endl;
   }
 
-  int total_failures = dispatch(D, N, rank);
+  int total_failures = dispatch(D, N, rank, S);
 
   if (rank == 0) {
     std::cout << "\n==========================================" << std::endl;

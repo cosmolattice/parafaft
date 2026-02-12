@@ -210,6 +210,16 @@ namespace parafaft
       MPI_Comm_rank(comm_world_, &rank_);
       MPI_Comm_size(comm_world_, &size_);
 
+      // If D=1, we cannot distribute across multiple processors. Handle this case separately.
+      if (D < 2) {
+        if (size_ > 1) {
+          if (rank_ == 0) {
+            std::cerr << "ParaFaFT Error: D=1 case cannot be run with multiple processes." << std::endl;
+          }
+          throw std::invalid_argument("ParaFaFT D must be >= 2 for distributed FFT.");
+        }
+      }
+
       // Store global real array dimensions
       for (int i = 0; i < D; ++i) {
         global_real_shape_[i] = global_shape[i];

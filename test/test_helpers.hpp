@@ -36,6 +36,28 @@ namespace parafaft_test
 {
 
   // --------------------------------------------------------------------------
+  // Shape enumeration for test data generation.
+  //   0 = Gaussian
+  //   1 = Step function (sphere)
+  //   2 = Random polynomial
+  // --------------------------------------------------------------------------
+  enum TestShape { SHAPE_GAUSSIAN = 0, SHAPE_STEP = 1, SHAPE_RANDOM_POLY = 2 };
+
+  inline const char *shape_name(int shape)
+  {
+    switch (shape) {
+    case SHAPE_GAUSSIAN:
+      return "Gaussian";
+    case SHAPE_STEP:
+      return "StepFunction";
+    case SHAPE_RANDOM_POLY:
+      return "RandomPolynomial";
+    default:
+      return "Unknown";
+    }
+  }
+
+  // --------------------------------------------------------------------------
   // Flat-index computation for a D-dimensional array in row-major order.
   // idx[d] is the coordinate in dimension d, shape[d] the extent.
   // --------------------------------------------------------------------------
@@ -103,6 +125,147 @@ namespace parafaft_test
     });
 
     return data;
+  }
+
+  // --------------------------------------------------------------------------
+  // Generate a D-dimensional step function (sphere) on a hypercubic grid of
+  // side N.  Value is 1 inside a sphere of radius N/4 centered at N/2, else 0.
+  // --------------------------------------------------------------------------
+  template <int D> std::vector<std::complex<double>> generate_step_nd(int N)
+  {
+    int total = 1;
+    for (int d = 0; d < D; ++d)
+      total *= N;
+
+    std::vector<std::complex<double>> data(total);
+    std::array<int, D> shape;
+    shape.fill(N);
+
+    const double center = N / 2.0;
+    const double radius = N / 4.0;
+    const double r2_max = radius * radius;
+
+    iterate_nd<D>(shape.data(), [&](const std::array<int, D> &idx) {
+      double r2 = 0.0;
+      for (int d = 0; d < D; ++d) {
+        double x = idx[d] - center;
+        r2 += x * x;
+      }
+      double value = (r2 <= r2_max) ? 1.0 : 0.0;
+      int flat = nd_index<D>(idx, shape);
+      data[flat] = std::complex<double>(value, 0.0);
+    });
+
+    return data;
+  }
+
+  // --------------------------------------------------------------------------
+  // Generate a D-dimensional random polynomial on a hypercubic grid of side N.
+  // Uses a deterministic seed so all MPI ranks produce the same data.
+  // The polynomial is a sum of random monomials of degree <= 3.
+  // --------------------------------------------------------------------------
+  template <int D> std::vector<std::complex<double>> generate_random_poly_nd(int N)
+  {
+    int total = 1;
+    for (int d = 0; d < D; ++d)
+      total *= N;
+
+    std::vector<std::complex<double>> data(total);
+    std::array<int, D> shape;
+    shape.fill(N);
+
+    // Deterministic coefficients (seeded pseudo-random via simple LCG)
+    // We generate D+1 coefficients for a polynomial:
+    //   f(x) = c0 + sum_d c1[d]*x_d + sum_d c2[d]*x_d^2 + sum_d c3[d]*x_d^3
+    const int num_coeffs = 1 + 3 * D;
+    std::vector<double> coeffs(num_coeffs);
+    unsigned int seed = 42u + D * 7u + N * 13u;
+    for (int i = 0; i < num_coeffs; ++i) {
+      seed = seed * 1103515245u + 12345u;
+      coeffs[i] = ((seed >> 16) & 0x7FFF) / 32768.0 - 0.5; // in [-0.5, 0.5)
+    }
+
+    const double inv_N = 1.0 / N;
+
+    iterate_nd<D>(shape.data(), [&](const std::array<int, D> &idx) {
+      double value = coeffs[0]; // constant term
+      for (int d = 0; d < D; ++d) {
+        double x = idx[d] * inv_N; // normalised to [0,1)
+        value += coeffs[1 + d] * x;
+        value += coeffs[1 + D + d] * x * x;
+        value += coeffs[1 + 2 * D + d] * x * x * x;
+      }
+      int flat = nd_index<D>(idx, shape);
+      data[flat] = std::complex<double>(value, 0.0);
+    });
+
+    return data;
+  }
+
+  // --------------------------------------------------------------------------
+  // Generic C2C data generator: dispatches on shape id.
+  // --------------------------------------------------------------------------
+  template <int D> std::vector<std::complex<double>> generate_c2c_data_nd(int N, int shape_id)
+  {
+    switch (shape_id) {
+    case SHAPE_GAUSSIAN:
+      return generate_gaussian_nd<D>(N, 4.0);
+    case SHAPE_STEP:
+      return generate_step_nd<D>(N);
+    case SHAPE_RANDOM_POLY:
+      return generate_random_poly_nd<D>(N);
+    default:
+      return generate_gaussian_nd<D>(N, 4.0);
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Point-wise value generator for local data (used by roundtrip tests).
+  // Returns the real value at a given global multi-index for the chosen shape.
+  // --------------------------------------------------------------------------
+  template <int D> double point_value(const std::array<int, D> &gidx, int N, int shape_id)
+  {
+    const double center = N / 2.0;
+    switch (shape_id) {
+    case SHAPE_GAUSSIAN: {
+      const double sigma = 4.0;
+      double r2 = 0.0;
+      for (int d = 0; d < D; ++d) {
+        double x = gidx[d] - center;
+        r2 += x * x;
+      }
+      return std::exp(-r2 / (2.0 * sigma * sigma));
+    }
+    case SHAPE_STEP: {
+      const double radius = N / 4.0;
+      double r2 = 0.0;
+      for (int d = 0; d < D; ++d) {
+        double x = gidx[d] - center;
+        r2 += x * x;
+      }
+      return (r2 <= radius * radius) ? 1.0 : 0.0;
+    }
+    case SHAPE_RANDOM_POLY: {
+      const int num_coeffs = 1 + 3 * D;
+      std::vector<double> coeffs(num_coeffs);
+      unsigned int seed = 42u + D * 7u + N * 13u;
+      for (int i = 0; i < num_coeffs; ++i) {
+        seed = seed * 1103515245u + 12345u;
+        coeffs[i] = ((seed >> 16) & 0x7FFF) / 32768.0 - 0.5;
+      }
+      const double inv_N = 1.0 / N;
+      double value = coeffs[0];
+      for (int d = 0; d < D; ++d) {
+        double x = gidx[d] * inv_N;
+        value += coeffs[1 + d] * x;
+        value += coeffs[1 + D + d] * x * x;
+        value += coeffs[1 + 2 * D + d] * x * x * x;
+      }
+      return value;
+    }
+    default:
+      return 0.0;
+    }
   }
 
   // --------------------------------------------------------------------------
@@ -402,6 +565,190 @@ namespace parafaft_test
     });
 
     return data;
+  }
+
+  // --------------------------------------------------------------------------
+  // Generate a D-dimensional step function for R2C (NON-PADDED, out-of-place).
+  // --------------------------------------------------------------------------
+  template <int D> std::vector<double> generate_step_r2c_nd(int N)
+  {
+    int real_total = 1;
+    for (int d = 0; d < D; ++d)
+      real_total *= N;
+
+    int complex_doubles = 1;
+    for (int d = 0; d < D - 1; ++d)
+      complex_doubles *= N;
+    complex_doubles *= (N / 2 + 1) * 2;
+
+    const int total_size = std::max(real_total, complex_doubles);
+    std::vector<double> data(total_size, 0.0);
+
+    std::array<int, D> shape;
+    shape.fill(N);
+    const double center = N / 2.0;
+    const double radius = N / 4.0;
+    const double r2_max = radius * radius;
+
+    iterate_nd<D>(shape.data(), [&](const std::array<int, D> &idx) {
+      double r2 = 0.0;
+      for (int d = 0; d < D; ++d) {
+        double x = idx[d] - center;
+        r2 += x * x;
+      }
+      int flat = nd_index_real<D>(idx, shape.data());
+      data[flat] = (r2 <= r2_max) ? 1.0 : 0.0;
+    });
+
+    return data;
+  }
+
+  // --------------------------------------------------------------------------
+  // Generate a D-dimensional random polynomial for R2C (NON-PADDED).
+  // --------------------------------------------------------------------------
+  template <int D> std::vector<double> generate_random_poly_r2c_nd(int N)
+  {
+    int real_total = 1;
+    for (int d = 0; d < D; ++d)
+      real_total *= N;
+
+    int complex_doubles = 1;
+    for (int d = 0; d < D - 1; ++d)
+      complex_doubles *= N;
+    complex_doubles *= (N / 2 + 1) * 2;
+
+    const int total_size = std::max(real_total, complex_doubles);
+    std::vector<double> data(total_size, 0.0);
+
+    std::array<int, D> shape;
+    shape.fill(N);
+
+    const int num_coeffs = 1 + 3 * D;
+    std::vector<double> coeffs(num_coeffs);
+    unsigned int seed = 42u + D * 7u + N * 13u;
+    for (int i = 0; i < num_coeffs; ++i) {
+      seed = seed * 1103515245u + 12345u;
+      coeffs[i] = ((seed >> 16) & 0x7FFF) / 32768.0 - 0.5;
+    }
+    const double inv_N = 1.0 / N;
+
+    iterate_nd<D>(shape.data(), [&](const std::array<int, D> &idx) {
+      double value = coeffs[0];
+      for (int d = 0; d < D; ++d) {
+        double x = idx[d] * inv_N;
+        value += coeffs[1 + d] * x;
+        value += coeffs[1 + D + d] * x * x;
+        value += coeffs[1 + 2 * D + d] * x * x * x;
+      }
+      int flat = nd_index_real<D>(idx, shape.data());
+      data[flat] = value;
+    });
+
+    return data;
+  }
+
+  // --------------------------------------------------------------------------
+  // Generate a D-dimensional step function for R2C (PADDED, in-place).
+  // --------------------------------------------------------------------------
+  template <int D> std::vector<double> generate_step_r2c_padded_nd(int N)
+  {
+    int total_size = 1;
+    for (int d = 0; d < D - 1; ++d)
+      total_size *= N;
+    total_size *= (N + 2);
+
+    std::vector<double> data(total_size, 0.0);
+
+    std::array<int, D> shape;
+    shape.fill(N);
+    const double center = N / 2.0;
+    const double radius = N / 4.0;
+    const double r2_max = radius * radius;
+
+    iterate_nd<D>(shape.data(), [&](const std::array<int, D> &idx) {
+      double r2 = 0.0;
+      for (int d = 0; d < D; ++d) {
+        double x = idx[d] - center;
+        r2 += x * x;
+      }
+      int flat = nd_index_real_padded<D>(idx, shape.data());
+      data[flat] = (r2 <= r2_max) ? 1.0 : 0.0;
+    });
+
+    return data;
+  }
+
+  // --------------------------------------------------------------------------
+  // Generate a D-dimensional random polynomial for R2C (PADDED, in-place).
+  // --------------------------------------------------------------------------
+  template <int D> std::vector<double> generate_random_poly_r2c_padded_nd(int N)
+  {
+    int total_size = 1;
+    for (int d = 0; d < D - 1; ++d)
+      total_size *= N;
+    total_size *= (N + 2);
+
+    std::vector<double> data(total_size, 0.0);
+
+    std::array<int, D> shape;
+    shape.fill(N);
+
+    const int num_coeffs = 1 + 3 * D;
+    std::vector<double> coeffs(num_coeffs);
+    unsigned int seed = 42u + D * 7u + N * 13u;
+    for (int i = 0; i < num_coeffs; ++i) {
+      seed = seed * 1103515245u + 12345u;
+      coeffs[i] = ((seed >> 16) & 0x7FFF) / 32768.0 - 0.5;
+    }
+    const double inv_N = 1.0 / N;
+
+    iterate_nd<D>(shape.data(), [&](const std::array<int, D> &idx) {
+      double value = coeffs[0];
+      for (int d = 0; d < D; ++d) {
+        double x = idx[d] * inv_N;
+        value += coeffs[1 + d] * x;
+        value += coeffs[1 + D + d] * x * x;
+        value += coeffs[1 + 2 * D + d] * x * x * x;
+      }
+      int flat = nd_index_real_padded<D>(idx, shape.data());
+      data[flat] = value;
+    });
+
+    return data;
+  }
+
+  // --------------------------------------------------------------------------
+  // Generic R2C data generator (NON-PADDED): dispatches on shape id.
+  // --------------------------------------------------------------------------
+  template <int D> std::vector<double> generate_r2c_data_nd(int N, int shape_id)
+  {
+    switch (shape_id) {
+    case SHAPE_GAUSSIAN:
+      return generate_gaussian_r2c_nd<D>(N, 4.0);
+    case SHAPE_STEP:
+      return generate_step_r2c_nd<D>(N);
+    case SHAPE_RANDOM_POLY:
+      return generate_random_poly_r2c_nd<D>(N);
+    default:
+      return generate_gaussian_r2c_nd<D>(N, 4.0);
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Generic R2C data generator (PADDED): dispatches on shape id.
+  // --------------------------------------------------------------------------
+  template <int D> std::vector<double> generate_r2c_padded_data_nd(int N, int shape_id)
+  {
+    switch (shape_id) {
+    case SHAPE_GAUSSIAN:
+      return generate_gaussian_r2c_padded_nd<D>(N, 4.0);
+    case SHAPE_STEP:
+      return generate_step_r2c_padded_nd<D>(N);
+    case SHAPE_RANDOM_POLY:
+      return generate_random_poly_r2c_padded_nd<D>(N);
+    default:
+      return generate_gaussian_r2c_padded_nd<D>(N, 4.0);
+    }
   }
 
   // --------------------------------------------------------------------------

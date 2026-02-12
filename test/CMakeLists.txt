@@ -217,27 +217,30 @@ function(add_mpi_tests_varN test_name test_file test_build)
 endfunction()
 
 function(add_mpi_tests_varN_varD test_name test_file test_build)
-    # 2D tests
-    add_test(NAME ${test_name}_np1_N32_D2 COMMAND mpirun -np 1 ${CMAKE_BINARY_DIR}/${test_file} 32 2)
-    add_test(NAME ${test_name}_np4_N32_D2 COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/${test_file} 32 2)
-    # 3D tests
-    add_test(NAME ${test_name}_np1_N32_D3 COMMAND mpirun -np 1 ${CMAKE_BINARY_DIR}/${test_file} 32 3)
-    add_test(NAME ${test_name}_np4_N32_D3 COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/${test_file} 32 3)
-    # 4D tests (smaller N)
-    add_test(NAME ${test_name}_np1_N16_D4 COMMAND mpirun -np 1 ${CMAKE_BINARY_DIR}/${test_file} 16 4)
-    add_test(NAME ${test_name}_np4_N16_D4 COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/${test_file} 16 4)
-    # 5D tests (even smaller N)
-    add_test(NAME ${test_name}_np1_N8_D5 COMMAND mpirun -np 1 ${CMAKE_BINARY_DIR}/${test_file} 8 5)
-    add_test(NAME ${test_name}_np4_N8_D5 COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/${test_file} 8 5)
-    # Dependencies
-    set_tests_properties(${test_name}_np1_N32_D2 PROPERTIES DEPENDS ${test_build})
-    set_tests_properties(${test_name}_np4_N32_D2 PROPERTIES DEPENDS ${test_build})
-    set_tests_properties(${test_name}_np1_N32_D3 PROPERTIES DEPENDS ${test_build})
-    set_tests_properties(${test_name}_np4_N32_D3 PROPERTIES DEPENDS ${test_build})
-    set_tests_properties(${test_name}_np1_N16_D4 PROPERTIES DEPENDS ${test_build})
-    set_tests_properties(${test_name}_np4_N16_D4 PROPERTIES DEPENDS ${test_build})
-    set_tests_properties(${test_name}_np1_N8_D5 PROPERTIES DEPENDS ${test_build})
-    set_tests_properties(${test_name}_np4_N8_D5 PROPERTIES DEPENDS ${test_build})
+    # Loop over shapes: 0=Gaussian, 1=StepFunction, 2=RandomPolynomial
+    foreach(S 0 1 2)
+        # 2D tests
+        add_test(NAME ${test_name}_np1_N32_D2_S${S} COMMAND mpirun -np 1 ${CMAKE_BINARY_DIR}/${test_file} 32 2 ${S})
+        add_test(NAME ${test_name}_np4_N32_D2_S${S} COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/${test_file} 32 2 ${S})
+        # 3D tests
+        add_test(NAME ${test_name}_np1_N32_D3_S${S} COMMAND mpirun -np 1 ${CMAKE_BINARY_DIR}/${test_file} 32 3 ${S})
+        add_test(NAME ${test_name}_np4_N32_D3_S${S} COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/${test_file} 32 3 ${S})
+        # 4D tests (smaller N)
+        add_test(NAME ${test_name}_np1_N16_D4_S${S} COMMAND mpirun -np 1 ${CMAKE_BINARY_DIR}/${test_file} 16 4 ${S})
+        add_test(NAME ${test_name}_np4_N16_D4_S${S} COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/${test_file} 16 4 ${S})
+        # 5D tests (even smaller N)
+        add_test(NAME ${test_name}_np1_N8_D5_S${S} COMMAND mpirun -np 1 ${CMAKE_BINARY_DIR}/${test_file} 8 5 ${S})
+        add_test(NAME ${test_name}_np4_N8_D5_S${S} COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/${test_file} 8 5 ${S})
+        # Dependencies
+        set_tests_properties(${test_name}_np1_N32_D2_S${S} PROPERTIES DEPENDS ${test_build})
+        set_tests_properties(${test_name}_np4_N32_D2_S${S} PROPERTIES DEPENDS ${test_build})
+        set_tests_properties(${test_name}_np1_N32_D3_S${S} PROPERTIES DEPENDS ${test_build})
+        set_tests_properties(${test_name}_np4_N32_D3_S${S} PROPERTIES DEPENDS ${test_build})
+        set_tests_properties(${test_name}_np1_N16_D4_S${S} PROPERTIES DEPENDS ${test_build})
+        set_tests_properties(${test_name}_np4_N16_D4_S${S} PROPERTIES DEPENDS ${test_build})
+        set_tests_properties(${test_name}_np1_N8_D5_S${S} PROPERTIES DEPENDS ${test_build})
+        set_tests_properties(${test_name}_np4_N8_D5_S${S} PROPERTIES DEPENDS ${test_build})
+    endforeach()
 endfunction()
 
 # Add tests to CTest

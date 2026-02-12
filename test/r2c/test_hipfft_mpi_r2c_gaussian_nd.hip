@@ -1,10 +1,11 @@
 // ============================================================================
 // Generalized N-dimensional R2C Gaussian test for parafaft (hipFFT backend).
 //
-// Usage:  mpirun -np <P> ./test_hipfft_mpi_r2c_gaussian_nd [N] [D]
+// Usage:  mpirun -np <P> ./test_hipfft_mpi_r2c_gaussian_nd [N] [D] [S]
 //
 //   N  – grid side length (default 32, or 16 when D >= 4)
 //   D  – number of dimensions (default 3, range 2..6)
+//   S  – shape: 0=Gaussian, 1=StepFunction, 2=RandomPolynomial (default 0)
 //
 // The test generates a D-dimensional Gaussian on an N^D hypercubic grid,
 // computes the forward R2C transform with parafaft (MPI-distributed, hipFFT
@@ -26,7 +27,7 @@
 // ============================================================================
 // Templated comparison: parafaft(hipFFT) vs serial FFTW reference.
 // ============================================================================
-template <int D> int compare_hipFFTBackend(const int N, int rank)
+template <int D> int compare_hipFFTBackend(const int N, int rank, int shape_id)
 {
   using namespace parafaft_test;
 
@@ -36,11 +37,11 @@ template <int D> int compare_hipFFTBackend(const int N, int rank)
     std::array<int, D> s;
     s.fill(N);
     print_shape<D>(std::cout, s.data());
-    std::cout << std::endl;
+    std::cout << " [shape=" << shape_name(shape_id) << "]" << std::endl;
   }
 
   // ---- Generate global data -------------------------------------------------
-  const auto global_original_data = generate_gaussian_r2c_nd<D>(N, 4.0);
+  const auto global_original_data = generate_r2c_data_nd<D>(N, shape_id);
 
   // ---- Serial FFTW R2C reference --------------------------------------------
   auto global_fftw_reference = global_original_data;
@@ -156,7 +157,7 @@ template <int D> int compare_hipFFTBackend(const int N, int rank)
 // ============================================================================
 // Dispatch
 // ============================================================================
-int dispatch(int D, int N, int rank)
+int dispatch(int D, int N, int rank, int shape_id)
 {
   using namespace parafaft_test;
   int failures = 0;
@@ -168,11 +169,12 @@ int dispatch(int D, int N, int rank)
     failures += compare_hipfft_vs_fftw_r2c<3>(N, rank);
 
   switch (D) {
-  case 2: failures += compare_hipFFTBackend<2>(N, rank); break;
-  case 3: failures += compare_hipFFTBackend<3>(N, rank); break;
-  case 4: failures += compare_hipFFTBackend<4>(N, rank); break;
-  case 5: failures += compare_hipFFTBackend<5>(N, rank); break;
-  case 6: failures += compare_hipFFTBackend<6>(N, rank); break;
+  case 1: failures += compare_hipFFTBackend<1>(N, rank, shape_id); break;
+  case 2: failures += compare_hipFFTBackend<2>(N, rank, shape_id); break;
+  case 3: failures += compare_hipFFTBackend<3>(N, rank, shape_id); break;
+  case 4: failures += compare_hipFFTBackend<4>(N, rank, shape_id); break;
+  case 5: failures += compare_hipFFTBackend<5>(N, rank, shape_id); break;
+  case 6: failures += compare_hipFFTBackend<6>(N, rank, shape_id); break;
   default:
     if (rank == 0) std::cerr << "Unsupported dimensionality D=" << D << " (supported: 2..6)" << std::endl;
     return 1;
@@ -193,20 +195,28 @@ int main(int argc, char **argv)
 
   int D = 3;
   int N = -1;
+  int S = 0;
 
   if (argc > 1) N = std::atoi(argv[1]);
   if (argc > 2) D = std::atoi(argv[2]);
+  if (argc > 3) S = std::atoi(argv[3]);
+
+  if (D == 1 && size > 1) {
+    if (rank == 0) std::cerr << "Error: D=1 test cannot be run with multiple processes." << std::endl;
+    MPI_Finalize();
+    return 1;
+  }
 
   if (N <= 0) N = (D >= 4) ? 16 : 32;
 
   if (rank == 0) {
     std::cout << "########################################" << std::endl;
     std::cout << "# TEST: r2c/hipfft_mpi_r2c_gaussian_nd" << std::endl;
-    std::cout << "# D = " << D << ",  N = " << N << std::endl;
+    std::cout << "# D = " << D << ",  N = " << N << ",  S = " << parafaft_test::shape_name(S) << std::endl;
     std::cout << "########################################" << std::endl;
   }
 
-  int total_failures = dispatch(D, N, rank);
+  int total_failures = dispatch(D, N, rank, S);
 
   if (rank == 0) {
     std::cout << "\n==========================================" << std::endl;
