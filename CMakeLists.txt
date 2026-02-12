@@ -71,7 +71,7 @@ target_link_libraries(parafaft INTERFACE
 )
 
 target_include_directories(parafaft INTERFACE
-    ${FFTW3_INCLUDE_DIRS}
+    $<BUILD_INTERFACE:${FFTW3_INCLUDE_DIRS}>
 )
 
 # Add CUDA dependencies if enabled
