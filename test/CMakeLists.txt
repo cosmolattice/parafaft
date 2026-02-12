@@ -185,34 +185,17 @@ add_custom_target(show-help
 enable_testing()
 
 function(add_serial_tests test_name test_file test_build)
-    add_test(NAME ${test_name} COMMAND ${CMAKE_BINARY_DIR}/${test_file})
-    # Make sure the test depends on the executable being built
-    set_tests_properties(${test_name} PROPERTIES DEPENDS ${test_build})
+    add_test(NAME ${test_name} COMMAND 
+        bash -c "make ${test_build} && ${CMAKE_BINARY_DIR}/${test_file}")
 endfunction()
 
 function(add_mpi_tests test_name test_file test_build)
-    add_test(NAME ${test_name}_np1 COMMAND mpirun -np 1 ${CMAKE_BINARY_DIR}/${test_file})
-    add_test(NAME ${test_name}_np4 COMMAND mpirun -np 4 ${CMAKE_BINARY_DIR}/${test_file})
-    add_test(NAME ${test_name}_np8 COMMAND mpirun -np 8 ${CMAKE_BINARY_DIR}/${test_file})
-    # Make sure the test depends on the executable being built
-    set_tests_properties(${test_name}_np1 PROPERTIES DEPENDS ${test_build})
-    set_tests_properties(${test_name}_np4 PROPERTIES DEPENDS ${test_build})
-    set_tests_properties(${test_name}_np8 PROPERTIES DEPENDS ${test_build})
-endfunction()
-
-function(add_mpi_tests_varN test_name test_file test_build)
-    add_test(NAME ${test_name}_np1_N8 COMMAND 
-        bash -c "make ${test_build} && mpirun -np 1 ${CMAKE_BINARY_DIR}/${test_file} 8")
-    add_test(NAME ${test_name}_np1_N32 COMMAND 
-        bash -c "make ${test_build} && mpirun -np 1 ${CMAKE_BINARY_DIR}/${test_file} 32")
-    add_test(NAME ${test_name}_np1_N64 COMMAND 
-        bash -c "make ${test_build} && mpirun -np 1 ${CMAKE_BINARY_DIR}/${test_file} 64")
-    add_test(NAME ${test_name}_np4_N8 COMMAND 
-        bash -c "make ${test_build} && mpirun -np 4 ${CMAKE_BINARY_DIR}/${test_file} 8")
-    add_test(NAME ${test_name}_np4_N32 COMMAND 
-        bash -c "make ${test_build} && mpirun -np 4 ${CMAKE_BINARY_DIR}/${test_file} 32")
-    add_test(NAME ${test_name}_np4_N64 COMMAND 
-        bash -c "make ${test_build} && mpirun -np 4 ${CMAKE_BINARY_DIR}/${test_file} 64")
+    add_test(NAME ${test_name}_np1 COMMAND 
+        bash -c "make ${test_build} && mpirun -np 1 ${CMAKE_BINARY_DIR}/${test_file}")
+    add_test(NAME ${test_name}_np4 COMMAND 
+        bash -c "make ${test_build} && mpirun -np 4 ${CMAKE_BINARY_DIR}/${test_file}")
+    add_test(NAME ${test_name}_np8 COMMAND 
+        bash -c "make ${test_build} && mpirun -np 8 ${CMAKE_BINARY_DIR}/${test_file}")
 endfunction()
 
 function(add_mpi_tests_varN_varD test_name test_file test_build)
