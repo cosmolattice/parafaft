@@ -311,11 +311,9 @@ namespace parafaft
      */
     void forward(const double *real_input, Complex *complex_output)
     {
-      std::cout << "Rank " << rank_ << ": Padding real input data" << std::endl;
       // Pad the data and move it into the destination buffer
       copy_real_to_padded(real_input, reinterpret_cast<double *>(complex_output));
 
-      std::cout << "Rank " << rank_ << ": Starting forward_in_place()" << std::endl;
       // In-place forward transform
       forward_in_place(reinterpret_cast<double *>(complex_output));
     }
@@ -474,7 +472,9 @@ namespace parafaft
     }
 
     /**
-     * @brief Get the local real array size.
+     * @brief Get the local real array size. This is the logical size without any padding, i.e. only appropriate for
+     * out-of-place transformations. For in-place transformations, use get_required_output_size() to determine the
+     * necessary buffer size.
      *
      * @return Total number of real elements in the local input array.
      */
@@ -488,7 +488,7 @@ namespace parafaft
     }
 
     /**
-     * @brief Get the output memory size (in doubles) required for transforms.
+     * @brief Get the output memory size (in doubles) required for in-place transforms.
      *
      * Returns the maximum buffer size needed across all stages, in doubles.
      * This must be large enough for:
@@ -523,7 +523,7 @@ namespace parafaft
     }
 
     /**
-     * @brief Get the local real array shape.
+     * @brief Get the local real array shape, i.e. the logical sizes without any padding!
      *
      * @param[out] shape Array of D integers to receive the local shape.
      */
