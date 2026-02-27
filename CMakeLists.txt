@@ -93,11 +93,11 @@ include(GNUInstallDirs)
 install(TARGETS parafaft EXPORT parafaftTargets)
 
 install(FILES parafaft_generic.hpp parafaft_r2c.hpp
-        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/parafaft)
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/)
 
 install(
   DIRECTORY backend
-  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/parafaft
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/
   FILES_MATCHING
   PATTERN "*.hpp")
 
