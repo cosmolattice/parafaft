@@ -9,6 +9,8 @@ project(
 option(PARAFAFT_CUDA "Enable CUDA support" OFF)
 option(PARAFAFT_HIP "Enable HIP support" OFF)
 option(PARAFAFT_TEST "Build tests" OFF)
+option(PARAFAFT_FFTW_THREADS "Use libfftw3_threads for threaded FFTW (preferred)" ON)
+option(PARAFAFT_FFTW_OMP "Use fftw3_omp for OpenMP-based threaded FFTW" ON)
 
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 14)
@@ -53,6 +55,23 @@ endif()
 find_package(MPI REQUIRED)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/fftw.cmake)
 
+# Determine threading strategy for FFTW
+# Priority: libfftw3_threads (POSIX) > fftw3_omp (OpenMP) > serial
+set(PARAFAFT_FFTW_THREADING "SERIAL" CACHE STRING "FFTW threading mode: Threads, OpenMP, or Serial")
+
+if(PARAFAFT_FFTW_THREADS AND FFTW3_THREADS_LIB)
+  set(PARAFAFT_FFTW_THREADING "Threads")
+  message(STATUS "FFTW threading: Using libfftw3_threads")
+elseif(PARAFAFT_FFTW_OMP AND FFTW3_OMP_LIB)
+  set(PARAFAFT_FFTW_THREADING "OpenMP")
+  message(STATUS "FFTW threading: Using fftw3_omp")
+  # Need OpenMP for fftw3_omp
+  find_package(OpenMP REQUIRED)
+else()
+  set(PARAFAFT_FFTW_THREADING "Serial")
+  message(STATUS "FFTW threading: Serial (no threaded libraries found)")
+endif()
+
 # Create header-only library target
 add_library(parafaft INTERFACE)
 add_library(parafaft::parafaft ALIAS parafaft)
@@ -63,7 +82,29 @@ target_include_directories(
                      $<INSTALL_INTERFACE:include>)
 
 # Link dependencies
-target_link_libraries(parafaft INTERFACE MPI::MPI_CXX ${FFTW3_LIBRARIES})
+# Order matters for static linking: threaded libs must come before main fftw3
+set(PARAFAFT_LINK_LIBRARIES MPI::MPI_CXX)
+
+# Add threading libraries first (they depend on fftw3)
+if(PARAFAFT_FFTW_THREADING STREQUAL "Threads")
+  list(APPEND PARAFAFT_LINK_LIBRARIES ${FFTW3_THREADS_LIB})
+  message(STATUS "FFTW: Linking with libfftw3_threads")
+elseif(PARAFAFT_FFTW_THREADING STREQUAL "OpenMP")
+  list(APPEND PARAFAFT_LINK_LIBRARIES ${FFTW3_OMP_LIB} OpenMP::OpenMP_CXX)
+  message(STATUS "FFTW: Linking with fftw3_omp and OpenMP")
+endif()
+
+# Add main FFTW library last (threaded libs depend on it)
+list(APPEND PARAFAFT_LINK_LIBRARIES ${FFTW3_LIBRARIES})
+
+# Expose threading mode to code via preprocessor
+if(PARAFAFT_FFTW_THREADING STREQUAL "Threads")
+  target_compile_definitions(parafaft INTERFACE PARAFAFT_FFTW_THREADS)
+elseif(PARAFAFT_FFTW_THREADING STREQUAL "OpenMP")
+  target_compile_definitions(parafaft INTERFACE PARAFAFT_FFTW_OMP)
+endif()
+
+target_link_libraries(parafaft INTERFACE ${PARAFAFT_LINK_LIBRARIES})
 
 target_include_directories(parafaft
                            INTERFACE $<BUILD_INTERFACE:${FFTW3_INCLUDE_DIRS}>)

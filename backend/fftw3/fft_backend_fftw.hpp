@@ -5,6 +5,11 @@
  * This header provides an FFT backend using the FFTW3 library for CPU-based
  * FFT operations. Supports C2C, R2C, and C2R transforms as required by
  * ParaFaFT and ParaFaFT_R2C.
+ *
+ * Threading Support:
+ * - If compiled with PARAFAFT_FFTW_THREADS, uses libfftw3_threads (POSIX threads)
+ * - If compiled with PARAFAFT_FFTW_OMP, uses fftw3_omp (OpenMP)
+ * - Otherwise, uses serial FFTW
  */
 
 #ifndef PARAFAFT_BACKEND_FFTW_HPP
@@ -14,10 +19,23 @@
 #include <complex>
 #include <vector>
 #include <cstring>
+#include <thread>
+#include <cstdlib>
+#include <mpi.h>
 #include "../fft_backend.hpp"
 
 namespace parafaft
 {
+  /**
+   * @enum FFTBackendType
+   * @brief Specifies the FFTW backend threading type.
+   */
+  enum class FFTBackendType {
+    Serial,   ///< Serial (single-threaded) FFTW
+    Threads,  ///< POSIX threads (libfftw3_threads)
+    OpenMP    ///< OpenMP-based (fftw3_omp)
+  };
+
   /**
    * @class FFTWBackend
    * @brief FFTW3 backend for CPU-based FFT operations.
@@ -42,7 +60,47 @@ namespace parafaft
      *
      * @param num_stages Number of FFT stages (typically D for D-dimensional transform)
      */
-    explicit FFTWBackend(int num_stages) : forward_plans_(num_stages, nullptr), backward_plans_(num_stages, nullptr) {}
+    explicit FFTWBackend(int num_stages)
+        : forward_plans_(num_stages, nullptr), backward_plans_(num_stages, nullptr), backend_type_(FFTBackendType::Serial),
+          num_threads_(1)
+    {
+#if defined(PARAFAFT_FFTW_THREADS)
+      backend_type_ = FFTBackendType::Threads;
+      fftw_init_threads();
+      num_threads_ = detect_thread_count(MPI_COMM_SELF);
+      fftw_plan_with_nthreads(num_threads_);
+#elif defined(PARAFAFT_FFTW_OMP)
+      backend_type_ = FFTBackendType::OpenMP;
+      fftw_init_threads();
+      num_threads_ = detect_thread_count(MPI_COMM_SELF);
+      fftw_plan_with_nthreads(num_threads_);
+#endif
+    }
+
+    /**
+     * @brief Construct an FFTW backend with MPI communicator for thread count calculation.
+     *
+     * @param num_stages Number of FFT stages (typically D for D-dimensional transform)
+     * @param comm MPI communicator (used to determine number of MPI tasks for thread count)
+     */
+    explicit FFTWBackend(int num_stages, MPI_Comm comm)
+        : forward_plans_(num_stages, nullptr), backward_plans_(num_stages, nullptr), backend_type_(FFTBackendType::Serial),
+          num_threads_(1)
+    {
+#if defined(PARAFAFT_FFTW_THREADS)
+      backend_type_ = FFTBackendType::Threads;
+      fftw_init_threads();
+      num_threads_ = detect_thread_count(comm);
+      fftw_plan_with_nthreads(num_threads_);
+#elif defined(PARAFAFT_FFTW_OMP)
+      backend_type_ = FFTBackendType::OpenMP;
+      fftw_init_threads();
+      num_threads_ = detect_thread_count(comm);
+      fftw_plan_with_nthreads(num_threads_);
+#else
+      (void)comm; // Suppress unused parameter warning
+#endif
+    }
 
     /**
      * @brief Create and store FFTW plans for a specific stage (C2C transforms).
@@ -228,6 +286,56 @@ namespace parafaft
     std::vector<fftw_plan> backward_plans_; ///< Backward C2C plans (one per stage)
     fftw_plan r2c_inplace_plan_ = nullptr;  ///< In-place R2C plan
     fftw_plan c2r_inplace_plan_ = nullptr;  ///< In-place C2R plan
+
+    FFTBackendType backend_type_; ///< Threading backend type
+    int num_threads_;              ///< Number of threads for FFTW
+
+    /**
+     * @brief Detect optimal thread count based on environment and hardware.
+     *
+     * Priority:
+     * 1. OMP_NUM_THREADS environment variable (if using OpenMP backend)
+     * 2. KOKKOS_NUM_THREADS environment variable
+     * 3. std::thread::hardware_concurrency() / mpi_task_count
+     * 4. Default to 1 (serial)
+     *
+     * @param comm MPI communicator for determining task count
+     * @return Optimal number of threads
+     */
+    int detect_thread_count(MPI_Comm comm)
+    {
+      int threads = 1;
+
+#if defined(PARAFAFT_FFTW_OMP)
+      const char *omp_threads = std::getenv("OMP_NUM_THREADS");
+      if (omp_threads != nullptr) {
+        threads = std::atoi(omp_threads);
+        if (threads > 0) {
+          return threads;
+        }
+      }
+#endif
+
+      const char *kokkos_threads = std::getenv("KOKKOS_NUM_THREADS");
+      if (kokkos_threads != nullptr) {
+        threads = std::atoi(kokkos_threads);
+        if (threads > 0) {
+          return threads;
+        }
+      }
+
+      unsigned int hw_threads = std::thread::hardware_concurrency();
+      if (hw_threads > 0) {
+        int mpi_size = 1;
+        MPI_Comm_size(comm, &mpi_size);
+        threads = static_cast<int>(hw_threads) / mpi_size;
+        if (threads < 1) {
+          threads = 1;
+        }
+      }
+
+      return threads;
+    }
   };
 
 } // namespace parafaft

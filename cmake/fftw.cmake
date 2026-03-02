@@ -5,10 +5,23 @@ mark_as_advanced(FFTW3_INCLUDES)
 find_library(FFTW3_LIB fftw3)
 mark_as_advanced(FFTW3_LIB)
 
+# Find optional threaded FFTW libraries
+# Priority: libfftw3_threads (POSIX threads) > fftw3_omp (OpenMP) > serial
+find_library(FFTW3_THREADS_LIB fftw3_threads)
+mark_as_advanced(FFTW3_THREADS_LIB)
+
+find_library(FFTW3_OMP_LIB fftw3_omp)
+mark_as_advanced(FFTW3_OMP_LIB)
+
 # If float support is enabled, find the single-precision FFTW libraries.
 if(Float)
   find_library(FFTW3F_LIB fftw3f)
   mark_as_advanced(FFTW3F_LIB)
+  # Also find threaded versions if available
+  find_library(FFTW3F_THREADS_LIB fftw3f_threads)
+  mark_as_advanced(FFTW3F_THREADS_LIB)
+  find_library(FFTW3F_OMP_LIB fftw3f_omp)
+  mark_as_advanced(FFTW3F_OMP_LIB)
 endif()
 
 set(FFTW3_LIBRARIES ${FFTW3_LIB})

@@ -45,11 +45,14 @@ namespace parafaft
    *
    * @section c2c_methods C2C Transform Methods (Required)
    *
-   * @subsection constructor Constructor
-   * @code
-   * Backend(int num_stages);
-   * @endcode
-   * Construct a backend with storage for the given number of FFT stages.
+    * @subsection constructor Constructor
+    * @code
+    * Backend(int num_stages);
+    * Backend(int num_stages, MPI_Comm comm);  // Optional: for thread count calculation
+    * @endcode
+    * Construct a backend with storage for the given number of FFT stages.
+    * The optional MPI_Comm parameter allows the backend to compute optimal thread count
+    * based on available hardware concurrency divided by MPI task count.
    *
    * @subsection create_stage_plan Plan Creation
    * @code

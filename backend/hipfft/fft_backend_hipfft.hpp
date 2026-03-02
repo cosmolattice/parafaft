@@ -127,13 +127,25 @@ namespace parafaft
     using ComplexBuffer = hipvector<Complex>; ///< Complex buffer type (device memory)
 
     /**
-     * @brief Construct a hipFFT backend with storage for the given number of stages.
-     *
-     * @param num_stages Number of FFT stages (typically D for D-dimensional transform)
-     */
+      * @brief Construct a hipFFT backend with storage for the given number of stages.
+      *
+      * @param num_stages Number of FFT stages (typically D for D-dimensional transform)
+      */
     explicit HipFFTBackend(int num_stages)
         : num_stages_(num_stages), forward_plans_(num_stages, 0), backward_plans_(num_stages, 0)
     {
+    }
+
+    /**
+     * @brief Construct a hipFFT backend with MPI communicator (for API compatibility).
+     *
+     * @param num_stages Number of FFT stages
+     * @param comm MPI communicator (unused for hipFFT, but provides API compatibility)
+     */
+    explicit HipFFTBackend(int num_stages, MPI_Comm comm)
+        : num_stages_(num_stages), forward_plans_(num_stages, 0), backward_plans_(num_stages, 0)
+    {
+      (void)comm; // Suppress unused parameter warning
     }
 
     /**

@@ -205,7 +205,7 @@ namespace parafaft
      * @param global_shape Array of D integers specifying the global real array dimensions
      * @param comm MPI communicator (default: MPI_COMM_WORLD)
      */
-    ParaFaFT_R2C(const int global_shape[D], MPI_Comm comm = MPI_COMM_WORLD) : comm_world_(comm), backend_(D)
+    ParaFaFT_R2C(const int global_shape[D], MPI_Comm comm = MPI_COMM_WORLD) : comm_world_(comm), backend_(D, comm)
     {
       MPI_Comm_rank(comm_world_, &rank_);
       MPI_Comm_size(comm_world_, &size_);
