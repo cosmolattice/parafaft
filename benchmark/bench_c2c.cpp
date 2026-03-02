@@ -20,8 +20,6 @@ template <int D> void run_benchmark(int N, int rank, int mpi_size, int iteration
               << ", FFTW threads=" << num_threads << ", iterations=" << iterations << std::endl;
   }
 
-  auto global_original_data = generate_gaussian_nd<D>(N, 4.0);
-
   std::array<int, D> global_shape;
   global_shape.fill(N);
 
@@ -35,17 +33,17 @@ template <int D> void run_benchmark(int N, int rank, int mpi_size, int iteration
 
   std::vector<std::complex<double>> local_data(local_size);
 
-  std::array<int, D> full_shape;
-  full_shape.fill(N);
+  const double center = N / 2.0;
+  const double sigma = 4.0;
 
   iterate_nd<D>(local_shape, [&](const std::array<int, D> &lidx) {
-    std::array<int, D> gidx;
-    for (int d = 0; d < D; ++d)
-      gidx[d] = global_start[d] + lidx[d];
-
-    int global_flat = nd_index<D>(gidx, full_shape);
+    double r2 = 0.0;
+    for (int d = 0; d < D; ++d) {
+      double x = (global_start[d] + lidx[d]) - center;
+      r2 += x * x;
+    }
     int local_flat = nd_index<D>(lidx.data(), local_shape);
-    local_data[local_flat] = global_original_data[global_flat];
+    local_data[local_flat] = std::complex<double>(std::exp(-r2 / (2.0 * sigma * sigma)), 0.0);
   });
 
   Statistics parafaft_stats;
@@ -70,17 +68,16 @@ template <int D> void run_benchmark(int N, int rank, int mpi_size, int iteration
     parafaft_stats.add(elapsed);
   }
 
-  for (int iter = 0; iter < 5; ++iter) {
-    auto fftw_local = local_data;
-    fftw_c2c_mpi_reference_nd<D>(fftw_local.data(), local_shape, global_start, N, MPI_COMM_WORLD);
-  }
+  FFTWMPIReferenceCtoC<D> fftw_ref(N, MPI_COMM_WORLD);
+
+  for (int iter = 0; iter < 5; ++iter)
+    fftw_ref.execute();
 
   double fftw_mean = 0.0, fftw_std = 0.0;
   for (int iter = 0; iter < iterations; ++iter) {
-    auto fftw_local = local_data;
     MPI_Barrier(MPI_COMM_WORLD);
     double start = MPI_Wtime();
-    fftw_c2c_mpi_reference_nd<D>(fftw_local.data(), local_shape, global_start, N, MPI_COMM_WORLD);
+    fftw_ref.execute();
     MPI_Barrier(MPI_COMM_WORLD);
     double elapsed = MPI_Wtime() - start;
     fftw_stats.add(elapsed);
@@ -104,6 +101,8 @@ template <int D> void run_benchmark(int N, int rank, int mpi_size, int iteration
 int main(int argc, char **argv)
 {
   MPI_Init(&argc, &argv);
+
+  parafaft_bench::init_fftw_mpi();
 
   int rank, mpi_size;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);

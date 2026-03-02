@@ -35,22 +35,16 @@ template <int D> void run_benchmark(int N, int rank, int mpi_size, int iteration
 
   std::vector<double> padded_buffer(local_padded_size, 0.0);
 
-  int local_real_size = fft.get_local_real_size();
-  std::vector<double> original(local_real_size);
+  const double center = N / 2.0;
+  const double sigma = 4.0;
 
-  std::array<int, D> full_shape;
-  full_shape.fill(N);
-
-  auto global_original = generate_gaussian_r2c_nd<D>(N, 4.0);
-
-  int orig_idx = 0;
   iterate_nd<D>(local_real_shape, [&](const std::array<int, D> &lidx) {
-    std::array<int, D> gidx;
-    for (int d = 0; d < D; ++d)
-      gidx[d] = real_start[d] + lidx[d];
-
-    int global_flat = nd_index<D>(gidx, full_shape);
-    double value = global_original[global_flat];
+    double r2 = 0.0;
+    for (int d = 0; d < D; ++d) {
+      double x = (real_start[d] + lidx[d]) - center;
+      r2 += x * x;
+    }
+    double value = std::exp(-r2 / (2.0 * sigma * sigma));
 
     int padded_flat = lidx[0];
     for (int d = 1; d < D - 1; ++d)
@@ -58,7 +52,6 @@ template <int D> void run_benchmark(int N, int rank, int mpi_size, int iteration
     padded_flat = padded_flat * padded_last + lidx[D - 1];
 
     padded_buffer[padded_flat] = value;
-    original[orig_idx++] = value;
   });
 
   Statistics parafaft_stats;
@@ -83,29 +76,26 @@ template <int D> void run_benchmark(int N, int rank, int mpi_size, int iteration
     parafaft_stats.add(elapsed);
   }
 
+  FFTWMPIReferenceRtoC<D> fftw_ref(N, MPI_COMM_WORLD);
+
+  for (int iter = 0; iter < 5; ++iter)
+    fftw_ref.execute();
+
+  for (int iter = 0; iter < iterations; ++iter) {
+    MPI_Barrier(MPI_COMM_WORLD);
+    double start = MPI_Wtime();
+    fftw_ref.execute();
+    MPI_Barrier(MPI_COMM_WORLD);
+    double elapsed = MPI_Wtime() - start;
+    fftw_stats.add(elapsed);
+  }
+
+  double parafaft_mean = parafaft_stats.mean();
+  double parafaft_std = parafaft_stats.stddev();
+  double fftw_mean = fftw_stats.mean();
+  double fftw_std = fftw_stats.stddev();
+
   if (rank == 0) {
-    auto fftw_data = generate_gaussian_r2c_padded_nd<D>(N, 4.0);
-
-    Timer fftw_timer;
-
-    for (int iter = 0; iter < 5; ++iter) {
-      auto copy = fftw_data;
-      fftw_r2c_roundtrip_reference_nd<D>(copy.data(), N);
-    }
-
-    for (int iter = 0; iter < iterations; ++iter) {
-      auto copy = fftw_data;
-      fftw_timer.start();
-      fftw_r2c_roundtrip_reference_nd<D>(copy.data(), N);
-      fftw_timer.stop();
-      fftw_stats.add(fftw_timer.elapsed());
-    }
-
-    double parafaft_mean = parafaft_stats.mean();
-    double parafaft_std = parafaft_stats.stddev();
-    double fftw_mean = fftw_stats.mean();
-    double fftw_std = fftw_stats.stddev();
-
     std::cout << "ParaFaFT: mean=" << parafaft_mean << "s, std=" << parafaft_std << "s" << std::endl;
     std::cout << "FFTW:     mean=" << fftw_mean << "s, std=" << fftw_std << "s" << std::endl;
 
@@ -117,6 +107,8 @@ template <int D> void run_benchmark(int N, int rank, int mpi_size, int iteration
 int main(int argc, char **argv)
 {
   MPI_Init(&argc, &argv);
+
+  parafaft_bench::init_fftw_mpi();
 
   int rank, mpi_size;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
