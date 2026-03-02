@@ -1,6 +1,6 @@
-# ParaFaFT: An MPI-Parallel Multidimensional FFT with Support for GPUs
+# ParaFaFT: An MPI-Parallel Fast Fourier Transform in arbitrary dimensions with Support for GPUs
 
-ParaFaFT provides a C++ implementation of multidimensional parallel FFT using MPI, based on the algorithm described in
+ParaFaFT (**Para**llel **Fa**st **F**ourier **T**ransform) provides a C++ implementation of multidimensional parallel FFT using MPI, based on the algorithm described in
 [***Dalcin, L., Mortensen, M., & Keyes, D. E. (2019). Fast parallel multidimensional FFT using advanced MPI. Journal of Parallel and Distributed Computing***](https://arxiv.org/abs/1804.09536).
 
 ## Features
