@@ -9,6 +9,7 @@ project(
 option(PARAFAFT_CUDA "Enable CUDA support" OFF)
 option(PARAFAFT_HIP "Enable HIP support" OFF)
 option(PARAFAFT_TEST "Build tests" OFF)
+option(PARAFAFT_BENCHMARK "Build benchmarks" OFF)
 option(PARAFAFT_FFTW_THREADS "Use libfftw3_threads for threaded FFTW (preferred)" ON)
 option(PARAFAFT_FFTW_OMP "Use fftw3_omp for OpenMP-based threaded FFTW" ON)
 
@@ -126,6 +127,11 @@ endif()
 if(PARAFAFT_TEST)
   enable_testing()
   add_subdirectory(test)
+endif()
+
+# Add benchmark subdirectory if enabled
+if(PARAFAFT_BENCHMARK)
+  add_subdirectory(benchmark)
 endif()
 
 # Installation
