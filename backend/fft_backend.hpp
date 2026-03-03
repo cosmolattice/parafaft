@@ -28,6 +28,21 @@ namespace parafaft
   };
 
   /**
+   * @enum FFTPlanFlag
+   * @brief Specifies the FFT planning strategy.
+   *
+   * Controls how much time the FFT library spends during plan creation to find
+   * optimal algorithms. Higher effort flags yield faster execution but slower
+   * initialization. For FFTW, maps to FFTW_ESTIMATE/FFTW_MEASURE/FFTW_PATIENT.
+   * GPU backends (cuFFT, hipFFT) ignore this flag.
+   */
+  enum class FFTPlanFlag {
+    Estimate, ///< Fastest planning, reasonable performance
+    Measure,  ///< Benchmarks several algorithms, picks fastest (2-5x speedup typical)
+    Patient   ///< Exhaustive benchmarking, best performance
+  };
+
+  /**
    * @page backend_concept FFT Backend Concept
    *
    * @section overview Overview
@@ -47,12 +62,14 @@ namespace parafaft
    *
     * @subsection constructor Constructor
     * @code
-    * Backend(int num_stages);
-    * Backend(int num_stages, MPI_Comm comm);  // Optional: for thread count calculation
+    * Backend(int num_stages, FFTPlanFlag plan_flag = FFTPlanFlag::Estimate);
+    * Backend(int num_stages, MPI_Comm comm, FFTPlanFlag plan_flag = FFTPlanFlag::Estimate);
     * @endcode
     * Construct a backend with storage for the given number of FFT stages.
     * The optional MPI_Comm parameter allows the backend to compute optimal thread count
     * based on available hardware concurrency divided by MPI task count.
+    * The plan_flag parameter controls the planning strategy: Estimate for fast planning,
+    * Measure or Patient for optimized execution. GPU backends may ignore this flag.
    *
    * @subsection create_stage_plan Plan Creation
    * @code

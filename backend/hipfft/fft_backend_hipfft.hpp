@@ -130,10 +130,12 @@ namespace parafaft
       * @brief Construct a hipFFT backend with storage for the given number of stages.
       *
       * @param num_stages Number of FFT stages (typically D for D-dimensional transform)
+      * @param plan_flag Planning strategy (ignored for hipFFT, accepted for API compatibility)
       */
-    explicit HipFFTBackend(int num_stages)
+    explicit HipFFTBackend(int num_stages, FFTPlanFlag plan_flag = FFTPlanFlag::Estimate)
         : num_stages_(num_stages), forward_plans_(num_stages, 0), backward_plans_(num_stages, 0)
     {
+      (void)plan_flag; // hipFFT does not support configurable planning
     }
 
     /**
@@ -141,11 +143,13 @@ namespace parafaft
      *
      * @param num_stages Number of FFT stages
      * @param comm MPI communicator (unused for hipFFT, but provides API compatibility)
+     * @param plan_flag Planning strategy (ignored for hipFFT, accepted for API compatibility)
      */
-    explicit HipFFTBackend(int num_stages, MPI_Comm comm)
+    explicit HipFFTBackend(int num_stages, MPI_Comm comm, FFTPlanFlag plan_flag = FFTPlanFlag::Estimate)
         : num_stages_(num_stages), forward_plans_(num_stages, 0), backward_plans_(num_stages, 0)
     {
       (void)comm; // Suppress unused parameter warning
+      (void)plan_flag; // hipFFT does not support configurable planning
     }
 
     /**

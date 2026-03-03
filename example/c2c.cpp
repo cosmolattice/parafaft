@@ -1,4 +1,4 @@
-#include "parafaft_generic.hpp"
+#include "parafaft_c2c.hpp"
 
 int main(int argc, char **argv) {
   MPI_Init(&argc, &argv);
@@ -7,9 +7,10 @@ int main(int argc, char **argv) {
   const int global_shape[3] = {32, 32, 32};
   parafaft::ParaFaFT<3> fft(global_shape);
 
-  // Allocate local data
+  // Allocate local data (use get_required_output_size for sufficient space)
   const int local_size = fft.get_local_size();
-  std::vector<std::complex<double>> data(local_size);
+  const int buffer_size = fft.get_required_output_size();
+  std::vector<std::complex<double>> data(buffer_size);
 
   // Initialize data
   int local_shape[3], global_start[3];

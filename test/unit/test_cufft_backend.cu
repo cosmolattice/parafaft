@@ -1,25 +1,25 @@
 // Unit tests for cuFFT backend (mirrors test_fftw_backend.cpp)
+#include "../../backend/cufft/fft_backend_cufft.hpp"
+#include <algorithm>
+#include <cmath>
+#include <complex>
+#include <cuda_runtime.h>
 #include <iostream>
 #include <vector>
-#include <complex>
-#include <cmath>
-#include <algorithm>
-#include <cuda_runtime.h>
-#include "../../backend/cufft/fft_backend_cufft.hpp"
 
 // Helper to check CUDA errors in tests
-#define CUDA_CHECK(call)                                                                                               \
-  do {                                                                                                                 \
-    cudaError_t err = call;                                                                                            \
-    if (err != cudaSuccess) {                                                                                          \
-      std::cerr << "CUDA error at " << __FILE__ << ":" << __LINE__ << ": " << cudaGetErrorString(err) << std::endl;    \
-      return;                                                                                                          \
-    }                                                                                                                  \
+#define CUDA_CHECK(call)                                                       \
+  do {                                                                         \
+    cudaError_t err = call;                                                    \
+    if (err != cudaSuccess) {                                                  \
+      std::cerr << "CUDA error at " << __FILE__ << ":" << __LINE__ << ": "     \
+                << cudaGetErrorString(err) << std::endl;                       \
+      return;                                                                  \
+    }                                                                          \
   } while (0)
 
 // Test 1: Contiguous data layout (stride=1, dist=N)
-void test_contiguous_layout()
-{
+void test_contiguous_layout() {
   const int N = 256;
   const int batch = 3;
 
@@ -40,7 +40,8 @@ void test_contiguous_layout()
   parafaft::cuvector<Complex> device_data(N * batch);
 
   // Copy to device
-  CUDA_CHECK(cudaMemcpy(device_data.data(), host_data.data(), N * batch * sizeof(Complex), cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemcpy(device_data.data(), host_data.data(),
+                        N * batch * sizeof(Complex), cudaMemcpyHostToDevice));
 
   try {
     // Create backend and plan
@@ -48,11 +49,14 @@ void test_contiguous_layout()
     backend.create_stage_plan(0, N, batch, device_data.data(), 1, N);
 
     // Roundtrip
-    backend.execute_stage(0, parafaft::FFTDirection::Forward, device_data.data());
-    backend.execute_stage(0, parafaft::FFTDirection::Backward, device_data.data());
+    backend.execute_stage(0, parafaft::FFTDirection::Forward,
+                          device_data.data());
+    backend.execute_stage(0, parafaft::FFTDirection::Backward,
+                          device_data.data());
 
     // Copy back to host
-    CUDA_CHECK(cudaMemcpy(host_data.data(), device_data.data(), N * batch * sizeof(Complex), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(host_data.data(), device_data.data(),
+                          N * batch * sizeof(Complex), cudaMemcpyDeviceToHost));
 
     // Normalize
     for (auto &val : host_data) {
@@ -77,8 +81,7 @@ void test_contiguous_layout()
 }
 
 // Test 2: Strided data layout (stride=batch, dist=1)
-void test_strided_layout()
-{
+void test_strided_layout() {
   const int N = 128;
   const int batch = 4;
 
@@ -89,7 +92,8 @@ void test_strided_layout()
   for (int i = 0; i < N; ++i) {
     for (int b = 0; b < batch; ++b) {
       double phase = 2.0 * M_PI * b / batch;
-      host_data[i * batch + b] = std::complex<double>(std::cos(phase), std::sin(phase));
+      host_data[i * batch + b] =
+          std::complex<double>(std::cos(phase), std::sin(phase));
     }
   }
   std::vector<std::complex<double>> original = host_data;
@@ -99,7 +103,8 @@ void test_strided_layout()
   parafaft::cuvector<Complex> device_data(N * batch);
 
   // Copy to device
-  CUDA_CHECK(cudaMemcpy(device_data.data(), host_data.data(), N * batch * sizeof(Complex), cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemcpy(device_data.data(), host_data.data(),
+                        N * batch * sizeof(Complex), cudaMemcpyHostToDevice));
 
   try {
     // Create backend and plan
@@ -107,11 +112,14 @@ void test_strided_layout()
     backend.create_stage_plan(0, N, batch, device_data.data(), batch, 1);
 
     // Roundtrip
-    backend.execute_stage(0, parafaft::FFTDirection::Forward, device_data.data());
-    backend.execute_stage(0, parafaft::FFTDirection::Backward, device_data.data());
+    backend.execute_stage(0, parafaft::FFTDirection::Forward,
+                          device_data.data());
+    backend.execute_stage(0, parafaft::FFTDirection::Backward,
+                          device_data.data());
 
     // Copy back to host
-    CUDA_CHECK(cudaMemcpy(host_data.data(), device_data.data(), N * batch * sizeof(Complex), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(host_data.data(), device_data.data(),
+                          N * batch * sizeof(Complex), cudaMemcpyDeviceToHost));
 
     // Normalize
     for (auto &val : host_data) {
@@ -136,8 +144,7 @@ void test_strided_layout()
 }
 
 // Test 3: Multiple stages with plan reuse
-void test_multiple_stages()
-{
+void test_multiple_stages() {
   const int N = 64;
   const int num_stages = 3;
 
@@ -158,9 +165,11 @@ void test_multiple_stages()
     // Allocate and copy to device
     device_data[stage].resize(N);
     cudaError_t err =
-        cudaMemcpy(device_data[stage].data(), host_data[stage].data(), N * sizeof(Complex), cudaMemcpyHostToDevice);
+        cudaMemcpy(device_data[stage].data(), host_data[stage].data(),
+                   N * sizeof(Complex), cudaMemcpyHostToDevice);
     if (err != cudaSuccess) {
-      std::cout << "Test multiple stages: [FAIL] cudaMemcpy failed" << std::endl;
+      std::cout << "Test multiple stages: [FAIL] cudaMemcpy failed"
+                << std::endl;
       return;
     }
   }
@@ -176,11 +185,14 @@ void test_multiple_stages()
     double max_error = 0.0;
     for (int repeat = 0; repeat < 3; ++repeat) {
       for (int stage = 0; stage < num_stages; ++stage) {
-        backend.execute_stage(stage, parafaft::FFTDirection::Forward, device_data[stage].data());
-        backend.execute_stage(stage, parafaft::FFTDirection::Backward, device_data[stage].data());
+        backend.execute_stage(stage, parafaft::FFTDirection::Forward,
+                              device_data[stage].data());
+        backend.execute_stage(stage, parafaft::FFTDirection::Backward,
+                              device_data[stage].data());
 
         // Copy back to host for normalization and error check
-        CUDA_CHECK(cudaMemcpy(host_data[stage].data(), device_data[stage].data(), N * sizeof(Complex),
+        CUDA_CHECK(cudaMemcpy(host_data[stage].data(),
+                              device_data[stage].data(), N * sizeof(Complex),
                               cudaMemcpyDeviceToHost));
 
         for (auto &val : host_data[stage]) {
@@ -189,11 +201,13 @@ void test_multiple_stages()
 
         // Check error after each roundtrip
         for (size_t i = 0; i < host_data[stage].size(); ++i) {
-          max_error = std::max(max_error, std::abs(host_data[stage][i] - original_data[stage][i]));
+          max_error = std::max(max_error, std::abs(host_data[stage][i] -
+                                                   original_data[stage][i]));
         }
 
         // Copy normalized data back to device for next iteration
-        CUDA_CHECK(cudaMemcpy(device_data[stage].data(), host_data[stage].data(), N * sizeof(Complex),
+        CUDA_CHECK(cudaMemcpy(device_data[stage].data(),
+                              host_data[stage].data(), N * sizeof(Complex),
                               cudaMemcpyHostToDevice));
       }
     }
@@ -205,13 +219,13 @@ void test_multiple_stages()
       std::cout << " [FAIL]" << std::endl;
     }
   } catch (const std::exception &e) {
-    std::cout << "Test multiple stages: [FAIL] Exception: " << e.what() << std::endl;
+    std::cout << "Test multiple stages: [FAIL] Exception: " << e.what()
+              << std::endl;
   }
 }
 
 // Test 4: Same plan applied to different data arrays
-void test_different_pointers()
-{
+void test_different_pointers() {
   const int N = 64;
   const int batch = 2;
 
@@ -226,7 +240,9 @@ void test_different_pointers()
   for (int i = 0; i < N * batch; ++i) {
     host_data1[i] = std::complex<double>(i % 10, 0.0);
     host_data2[i] = std::complex<double>(0.0, i % 5);
-    host_data3[i] = std::exp(-static_cast<double>((i - N * batch / 2) * (i - N * batch / 2)) / (2.0 * 100.0));
+    host_data3[i] = std::exp(
+        -static_cast<double>((i - N * batch / 2) * (i - N * batch / 2)) /
+        (2.0 * 100.0));
   }
   auto original1 = host_data1;
   auto original2 = host_data2;
@@ -238,9 +254,12 @@ void test_different_pointers()
   parafaft::cuvector<Complex> device_data3(N * batch);
 
   // Copy to device
-  CUDA_CHECK(cudaMemcpy(device_data1.data(), host_data1.data(), N * batch * sizeof(Complex), cudaMemcpyHostToDevice));
-  CUDA_CHECK(cudaMemcpy(device_data2.data(), host_data2.data(), N * batch * sizeof(Complex), cudaMemcpyHostToDevice));
-  CUDA_CHECK(cudaMemcpy(device_data3.data(), host_data3.data(), N * batch * sizeof(Complex), cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemcpy(device_data1.data(), host_data1.data(),
+                        N * batch * sizeof(Complex), cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemcpy(device_data2.data(), host_data2.data(),
+                        N * batch * sizeof(Complex), cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemcpy(device_data3.data(), host_data3.data(),
+                        N * batch * sizeof(Complex), cudaMemcpyHostToDevice));
 
   try {
     // Create single backend and plan (using data1 for plan creation)
@@ -248,21 +267,30 @@ void test_different_pointers()
     backend.create_stage_plan(0, N, batch, device_data1.data(), 1, N);
 
     // Apply the same plan to all three different arrays
-    backend.execute_stage(0, parafaft::FFTDirection::Forward, device_data1.data());
-    backend.execute_stage(0, parafaft::FFTDirection::Backward, device_data1.data());
-    CUDA_CHECK(cudaMemcpy(host_data1.data(), device_data1.data(), N * batch * sizeof(Complex), cudaMemcpyDeviceToHost));
+    backend.execute_stage(0, parafaft::FFTDirection::Forward,
+                          device_data1.data());
+    backend.execute_stage(0, parafaft::FFTDirection::Backward,
+                          device_data1.data());
+    CUDA_CHECK(cudaMemcpy(host_data1.data(), device_data1.data(),
+                          N * batch * sizeof(Complex), cudaMemcpyDeviceToHost));
     for (auto &val : host_data1)
       val /= N;
 
-    backend.execute_stage(0, parafaft::FFTDirection::Forward, device_data2.data());
-    backend.execute_stage(0, parafaft::FFTDirection::Backward, device_data2.data());
-    CUDA_CHECK(cudaMemcpy(host_data2.data(), device_data2.data(), N * batch * sizeof(Complex), cudaMemcpyDeviceToHost));
+    backend.execute_stage(0, parafaft::FFTDirection::Forward,
+                          device_data2.data());
+    backend.execute_stage(0, parafaft::FFTDirection::Backward,
+                          device_data2.data());
+    CUDA_CHECK(cudaMemcpy(host_data2.data(), device_data2.data(),
+                          N * batch * sizeof(Complex), cudaMemcpyDeviceToHost));
     for (auto &val : host_data2)
       val /= N;
 
-    backend.execute_stage(0, parafaft::FFTDirection::Forward, device_data3.data());
-    backend.execute_stage(0, parafaft::FFTDirection::Backward, device_data3.data());
-    CUDA_CHECK(cudaMemcpy(host_data3.data(), device_data3.data(), N * batch * sizeof(Complex), cudaMemcpyDeviceToHost));
+    backend.execute_stage(0, parafaft::FFTDirection::Forward,
+                          device_data3.data());
+    backend.execute_stage(0, parafaft::FFTDirection::Backward,
+                          device_data3.data());
+    CUDA_CHECK(cudaMemcpy(host_data3.data(), device_data3.data(),
+                          N * batch * sizeof(Complex), cudaMemcpyDeviceToHost));
     for (auto &val : host_data3)
       val /= N;
 
@@ -281,13 +309,13 @@ void test_different_pointers()
       std::cout << " [FAIL]" << std::endl;
     }
   } catch (const std::exception &e) {
-    std::cout << "Test different pointers: [FAIL] Exception: " << e.what() << std::endl;
+    std::cout << "Test different pointers: [FAIL] Exception: " << e.what()
+              << std::endl;
   }
 }
 
 // Test 5: R2C/C2R in-place roundtrip
-void test_r2c_c2r_inplace()
-{
+void test_r2c_c2r_inplace() {
   const int N = 128; // Real-space length
   const int batch = 2;
   const int padded_dist = 2 * (N / 2 + 1); // Padded distance for in-place R2C
@@ -319,14 +347,17 @@ void test_r2c_c2r_inplace()
   parafaft::cuvector<double> device_data(batch * padded_dist);
 
   // Copy to device
-  CUDA_CHECK(
-      cudaMemcpy(device_data.data(), host_data.data(), batch * padded_dist * sizeof(double), cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemcpy(device_data.data(), host_data.data(),
+                        batch * padded_dist * sizeof(double),
+                        cudaMemcpyHostToDevice));
 
   try {
     // Create backend with R2C and C2R plans
     parafaft::CuFFTBackend backend(0); // No C2C stages needed
-    backend.create_r2c_inplace_plan(N, batch, device_data.data(), 1, padded_dist);
-    backend.create_c2r_inplace_plan(N, batch, device_data.data(), 1, padded_dist);
+    backend.create_r2c_inplace_plan(N, batch, device_data.data(), 1,
+                                    padded_dist);
+    backend.create_c2r_inplace_plan(N, batch, device_data.data(), 1,
+                                    padded_dist);
 
     // R2C forward
     backend.execute_r2c_inplace(device_data.data());
@@ -335,8 +366,9 @@ void test_r2c_c2r_inplace()
     backend.execute_c2r_inplace(device_data.data());
 
     // Copy back to host
-    CUDA_CHECK(
-        cudaMemcpy(host_data.data(), device_data.data(), batch * padded_dist * sizeof(double), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(host_data.data(), device_data.data(),
+                          batch * padded_dist * sizeof(double),
+                          cudaMemcpyDeviceToHost));
 
     // Normalize (cuFFT doesn't normalize, need to divide by N)
     for (int b = 0; b < batch; ++b) {
@@ -349,7 +381,9 @@ void test_r2c_c2r_inplace()
     double max_error = 0.0;
     for (int b = 0; b < batch; ++b) {
       for (int i = 0; i < N; ++i) {
-        max_error = std::max(max_error, std::abs(host_data[b * padded_dist + i] - original[b * N + i]));
+        max_error =
+            std::max(max_error, std::abs(host_data[b * padded_dist + i] -
+                                         original[b * N + i]));
       }
     }
 
@@ -360,21 +394,24 @@ void test_r2c_c2r_inplace()
       std::cout << " [FAIL]" << std::endl;
     }
   } catch (const std::exception &e) {
-    std::cout << "Test R2C/C2R in-place: [FAIL] Exception: " << e.what() << std::endl;
+    std::cout << "Test R2C/C2R in-place: [FAIL] Exception: " << e.what()
+              << std::endl;
   }
 }
 
-int main()
-{
+int main(int argc, char *argv[]) {
   std::cout << "########################################" << std::endl;
   std::cout << "# TEST: unit/cufft_backend" << std::endl;
   std::cout << "########################################" << std::endl;
+
+  MPI_Init(&argc, &argv);
 
   // Check if CUDA device is available
   int deviceCount = 0;
   cudaError_t err = cudaGetDeviceCount(&deviceCount);
   if (err != cudaSuccess || deviceCount == 0) {
-    std::cout << "No CUDA devices available. Skipping cuFFT backend tests." << std::endl;
+    std::cout << "No CUDA devices available. Skipping cuFFT backend tests."
+              << std::endl;
     return 0;
   }
 
@@ -390,5 +427,7 @@ int main()
   std::cout << "================================" << std::endl;
   std::cout << "cuFFT backend tests complete." << std::endl;
 
+  MPI_Barrier(MPI_COMM_WORLD);
+  MPI_Finalize();
   return 0;
 }

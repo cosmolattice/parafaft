@@ -1,5 +1,5 @@
 #include "../backend/fftw3/fft_backend_fftw.hpp"
-#include "../parafaft_generic.hpp"
+#include "../parafaft_c2c.hpp"
 #include "bench_helpers.hpp"
 
 #include <cmath>
@@ -27,12 +27,13 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
   parafaft::ParaFaFT<D, parafaft::FFTWBackend> fft(global_shape.data());
 
   int local_size = fft.get_local_size();
+  int buffer_size = fft.get_required_output_size();
   int local_shape[D];
   int global_start[D];
   fft.get_local_shape(local_shape);
   fft.get_global_start(global_start);
 
-  std::vector<std::complex<double>> local_data(local_size);
+  std::vector<std::complex<double>> local_data(buffer_size);
 
   const double center = N / 2.0;
   const double sigma = 4.0;

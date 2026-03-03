@@ -12,8 +12,8 @@
 // compares against a serial FFTW reference.
 // ============================================================================
 
-#include "../../parafaft_generic.hpp"
 #include "../../backend/fftw3/fft_backend_fftw.hpp"
+#include "../../parafaft_c2c.hpp"
 #include "../test_helpers.hpp"
 
 #include <cmath>
@@ -25,13 +25,13 @@
 // ============================================================================
 // Templated comparison function – works for any D.
 // ============================================================================
-template <int D> int compare_fftwBackend(const int N, int rank, int shape_id)
-{
+template <int D> int compare_fftwBackend(const int N, int rank, int shape_id) {
   using namespace parafaft_test;
 
   if (rank == 0) {
     std::cout << "\n==========================================" << std::endl;
-    std::cout << "Testing parafaft FFTWBackend for " << D << "D C2C transform of size ";
+    std::cout << "Testing parafaft FFTWBackend for " << D
+              << "D C2C transform of size ";
     std::array<int, D> s;
     s.fill(N);
     print_shape<D>(std::cout, s.data());
@@ -51,13 +51,14 @@ template <int D> int compare_fftwBackend(const int N, int rank, int shape_id)
   parafaft::ParaFaFT<D, parafaft::FFTWBackend> fft(global_shape.data());
 
   int local_size = fft.get_local_size();
+  int buffer_size = fft.get_required_output_size();
   int local_shape[D];
   int global_start[D];
   fft.get_local_shape(local_shape);
   fft.get_global_start(global_start);
 
   // ---- Scatter global data into local partition -----------------------------
-  std::vector<std::complex<double>> local_data(local_size);
+  std::vector<std::complex<double>> local_data(buffer_size);
 
   std::array<int, D> full_shape;
   full_shape.fill(N);
@@ -86,7 +87,8 @@ template <int D> int compare_fftwBackend(const int N, int rank, int shape_id)
   // ---- Forward FFT ----------------------------------------------------------
   fft.forward(local_data.data());
 
-  std::cout << "After transform: First 32 local values on rank " << rank << ": ";
+  std::cout << "After transform: First 32 local values on rank " << rank
+            << ": ";
   for (int i = 0; i < std::min(32, local_size); ++i) {
     std::cout << local_data[i] << " ";
   }
@@ -107,21 +109,28 @@ template <int D> int compare_fftwBackend(const int N, int rank, int shape_id)
 
     int global_flat = nd_index<D>(gidx, full_shape);
     int local_flat = nd_index<D>(fidx.data(), final_shape);
-    double error = std::abs(local_data[local_flat] - global_fftw_reference[global_flat]);
-    if (error > max_error) max_error = error;
+    double error =
+        std::abs(local_data[local_flat] - global_fftw_reference[global_flat]);
+    if (error > max_error)
+      max_error = error;
   });
 
   // ---- Gather results -------------------------------------------------------
   const double tolerance = 1e-10;
   const bool local_success = (max_error < tolerance);
   int global_success = local_success ? 1 : 0;
-  MPI_Allreduce(MPI_IN_PLACE, &global_success, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+  MPI_Allreduce(MPI_IN_PLACE, &global_success, 1, MPI_INT, MPI_MIN,
+                MPI_COMM_WORLD);
 
   if (global_success == 1 && rank == 0) {
-    std::cout << "Test passed: parafaft FFTWBackend produces correct results." << std::endl;
+    std::cout << "Test passed: parafaft FFTWBackend produces correct results."
+              << std::endl;
     std::cout << "Maximum error: " << max_error << std::endl;
   } else if (!global_success) {
-    std::cout << "Rank " << rank << ": Test failed: parafaft FFTWBackend produces incorrect results." << std::endl;
+    std::cout
+        << "Rank " << rank
+        << ": Test failed: parafaft FFTWBackend produces incorrect results."
+        << std::endl;
     std::cout << "Maximum error: " << max_error << std::endl;
     return 1;
   }
@@ -135,8 +144,7 @@ template <int D> int compare_fftwBackend(const int N, int rank, int shape_id)
 // We explicitly instantiate D = 2..6.  Higher dimensions can be added by
 // extending the switch below.
 // ============================================================================
-int dispatch(int D, int N, int rank, int shape_id)
-{
+int dispatch(int D, int N, int rank, int shape_id) {
   switch (D) {
   case 1:
     return compare_fftwBackend<1>(N, rank, shape_id);
@@ -151,7 +159,9 @@ int dispatch(int D, int N, int rank, int shape_id)
   case 6:
     return compare_fftwBackend<6>(N, rank, shape_id);
   default:
-    if (rank == 0) std::cerr << "Unsupported dimensionality D=" << D << " (supported: 2..6)" << std::endl;
+    if (rank == 0)
+      std::cerr << "Unsupported dimensionality D=" << D << " (supported: 2..6)"
+                << std::endl;
     return 1;
   }
 }
@@ -159,8 +169,7 @@ int dispatch(int D, int N, int rank, int shape_id)
 // ============================================================================
 // Main
 // ============================================================================
-int main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
   MPI_Init(&argc, &argv);
   int rank, size;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -171,23 +180,30 @@ int main(int argc, char **argv)
   int N = -1; // sentinel — pick a sensible default based on D
   int S = 0;  // default shape: Gaussian
 
-  if (argc > 1) N = std::atoi(argv[1]);
-  if (argc > 2) D = std::atoi(argv[2]);
-  if (argc > 3) S = std::atoi(argv[3]);
+  if (argc > 1)
+    N = std::atoi(argv[1]);
+  if (argc > 2)
+    D = std::atoi(argv[2]);
+  if (argc > 3)
+    S = std::atoi(argv[3]);
 
   if (D == 1 && size > 1) {
-    if (rank == 0) std::cerr << "Error: D=1 test cannot be run with multiple processes." << std::endl;
+    if (rank == 0)
+      std::cerr << "Error: D=1 test cannot be run with multiple processes."
+                << std::endl;
     MPI_Finalize();
     return 1;
   }
 
   // Pick a reasonable default N if not provided
-  if (N <= 0) N = (D >= 4) ? 16 : 32;
+  if (N <= 0)
+    N = (D >= 4) ? 16 : 32;
 
   if (rank == 0) {
     std::cout << "########################################" << std::endl;
     std::cout << "# TEST: c2c/fftw_mpi_c2c_gaussian_nd" << std::endl;
-    std::cout << "# D = " << D << ",  N = " << N << ",  S = " << parafaft_test::shape_name(S) << std::endl;
+    std::cout << "# D = " << D << ",  N = " << N
+              << ",  S = " << parafaft_test::shape_name(S) << std::endl;
     std::cout << "########################################" << std::endl;
   }
 

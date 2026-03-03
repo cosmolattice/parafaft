@@ -362,11 +362,12 @@ void test_r2c_c2r_inplace()
   }
 }
 
-int main()
-{
+int main(int argc, char **argv) {
   std::cout << "########################################" << std::endl;
   std::cout << "# TEST: unit/hipfft_backend" << std::endl;
   std::cout << "########################################" << std::endl;
+
+  MPI_Init(&argc, &argv);
 
   // Check if HIP device is available
   int deviceCount = 0;
@@ -388,5 +389,7 @@ int main()
   std::cout << "================================" << std::endl;
   std::cout << "hipFFT backend tests complete." << std::endl;
 
+  MPI_Barrier(MPI_COMM_WORLD);
+  MPI_Finalize();
   return 0;
 }

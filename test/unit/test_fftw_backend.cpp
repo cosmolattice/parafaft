@@ -1,13 +1,12 @@
+#include "../../backend/fftw3/fft_backend_fftw.hpp"
+#include <algorithm>
+#include <cmath>
+#include <complex>
 #include <iostream>
 #include <vector>
-#include <complex>
-#include <cmath>
-#include <algorithm>
-#include "../../backend/fftw3/fft_backend_fftw.hpp"
 
 // Test 1: Contiguous data layout (stride=1, dist=N)
-void test_contiguous_layout()
-{
+void test_contiguous_layout() {
   const int N = 256;
   const int batch = 3;
 
@@ -50,8 +49,7 @@ void test_contiguous_layout()
 }
 
 // Test 2: Strided data layout (stride=batch, dist=1)
-void test_strided_layout()
-{
+void test_strided_layout() {
   const int N = 128;
   const int batch = 4;
 
@@ -61,7 +59,8 @@ void test_strided_layout()
   for (int i = 0; i < N; ++i) {
     for (int b = 0; b < batch; ++b) {
       double phase = 2.0 * M_PI * b / batch;
-      data[i * batch + b] = std::complex<double>(std::cos(phase), std::sin(phase));
+      data[i * batch + b] =
+          std::complex<double>(std::cos(phase), std::sin(phase));
     }
   }
   std::vector<std::complex<double>> original = data;
@@ -94,8 +93,7 @@ void test_strided_layout()
 }
 
 // Test 3: Multiple stages with plan reuse
-void test_multiple_stages()
-{
+void test_multiple_stages() {
   const int N = 64;
   const int num_stages = 3;
 
@@ -120,15 +118,18 @@ void test_multiple_stages()
   double max_error = 0.0;
   for (int repeat = 0; repeat < 3; ++repeat) {
     for (int stage = 0; stage < num_stages; ++stage) {
-      backend.execute_stage(stage, parafaft::FFTDirection::Forward, stage_data[stage].data());
-      backend.execute_stage(stage, parafaft::FFTDirection::Backward, stage_data[stage].data());
+      backend.execute_stage(stage, parafaft::FFTDirection::Forward,
+                            stage_data[stage].data());
+      backend.execute_stage(stage, parafaft::FFTDirection::Backward,
+                            stage_data[stage].data());
       for (auto &val : stage_data[stage]) {
         val /= N;
       }
 
       // Check error after each roundtrip
       for (size_t i = 0; i < stage_data[stage].size(); ++i) {
-        max_error = std::max(max_error, std::abs(stage_data[stage][i] - original_data[stage][i]));
+        max_error = std::max(max_error, std::abs(stage_data[stage][i] -
+                                                 original_data[stage][i]));
       }
     }
   }
@@ -142,8 +143,7 @@ void test_multiple_stages()
 }
 
 // Test 4: Same plan applied to different data arrays
-void test_different_pointers()
-{
+void test_different_pointers() {
   const int N = 64;
   const int batch = 2;
 
@@ -156,7 +156,9 @@ void test_different_pointers()
   for (int i = 0; i < N * batch; ++i) {
     data1[i] = std::complex<double>(i % 10, 0.0);
     data2[i] = std::complex<double>(0.0, i % 5);
-    data3[i] = std::exp(-static_cast<double>((i - N * batch / 2) * (i - N * batch / 2)) / (2.0 * 100.0));
+    data3[i] = std::exp(
+        -static_cast<double>((i - N * batch / 2) * (i - N * batch / 2)) /
+        (2.0 * 100.0));
   }
   auto original1 = data1;
   auto original2 = data2;
@@ -198,15 +200,19 @@ void test_different_pointers()
   }
 }
 
-int main()
-{
+int main(int argc, char **argv) {
   std::cout << "########################################" << std::endl;
   std::cout << "# TEST: unit/fftw_backend" << std::endl;
   std::cout << "########################################" << std::endl;
+
+  MPI_Init(&argc, &argv);
 
   test_contiguous_layout();
   test_strided_layout();
   test_multiple_stages();
   test_different_pointers();
+
+  MPI_Barrier(MPI_COMM_WORLD);
+  MPI_Finalize();
   return 0;
 }

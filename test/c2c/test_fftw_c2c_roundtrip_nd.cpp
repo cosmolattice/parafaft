@@ -12,7 +12,7 @@
 // FFTW backend), normalises, and checks that the result matches the original.
 // ============================================================================
 
-#include "../../parafaft_generic.hpp"
+#include "../../parafaft_c2c.hpp"
 #include "../test_helpers.hpp"
 
 #include <cmath>
@@ -24,8 +24,7 @@
 // ============================================================================
 // Templated roundtrip test – works for any D.
 // ============================================================================
-template <int D> int roundtrip_test(const int N, int rank, int shape_id)
-{
+template <int D> int roundtrip_test(const int N, int rank, int shape_id) {
   using namespace parafaft_test;
 
   if (rank == 0) {
@@ -43,13 +42,15 @@ template <int D> int roundtrip_test(const int N, int rank, int shape_id)
   parafaft::ParaFaFT<D, parafaft::FFTWBackend> fft(global_shape.data());
 
   int local_size = fft.get_local_size();
+  int buffer_size = fft.get_required_output_size();
   int local_shape[D];
   int global_start[D];
   fft.get_local_shape(local_shape);
   fft.get_global_start(global_start);
 
-  // ---- Generate local portion of data ----------------------------------------
-  std::vector<std::complex<double>> data(local_size);
+  // ---- Generate local portion of data
+  // ----------------------------------------
+  std::vector<std::complex<double>> data(buffer_size);
   std::vector<std::complex<double>> original(local_size);
 
   iterate_nd<D>(local_shape, [&](const std::array<int, D> &lidx) {
@@ -80,11 +81,13 @@ template <int D> int roundtrip_test(const int N, int rank, int shape_id)
   double local_max_error = 0.0;
   for (int i = 0; i < local_size; ++i) {
     double err = std::abs(data[i] - original[i]);
-    if (err > local_max_error) local_max_error = err;
+    if (err > local_max_error)
+      local_max_error = err;
   }
 
   double global_max_error = 0.0;
-  MPI_Reduce(&local_max_error, &global_max_error, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&local_max_error, &global_max_error, 1, MPI_DOUBLE, MPI_MAX, 0,
+             MPI_COMM_WORLD);
 
   const double tolerance = 1e-10;
   int local_pass = (local_max_error < tolerance) ? 1 : 0;
@@ -106,8 +109,7 @@ template <int D> int roundtrip_test(const int N, int rank, int shape_id)
 // ============================================================================
 // Dispatch
 // ============================================================================
-int dispatch(int D, int N, int rank, int shape_id)
-{
+int dispatch(int D, int N, int rank, int shape_id) {
   switch (D) {
   case 1:
     return roundtrip_test<1>(N, rank, shape_id);
@@ -122,7 +124,9 @@ int dispatch(int D, int N, int rank, int shape_id)
   case 6:
     return roundtrip_test<6>(N, rank, shape_id);
   default:
-    if (rank == 0) std::cerr << "Unsupported dimensionality D=" << D << " (supported: 2..6)" << std::endl;
+    if (rank == 0)
+      std::cerr << "Unsupported dimensionality D=" << D << " (supported: 2..6)"
+                << std::endl;
     return 1;
   }
 }
@@ -130,8 +134,7 @@ int dispatch(int D, int N, int rank, int shape_id)
 // ============================================================================
 // Main
 // ============================================================================
-int main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
   MPI_Init(&argc, &argv);
   int rank, size;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -141,22 +144,29 @@ int main(int argc, char **argv)
   int N = -1;
   int S = 0;
 
-  if (argc > 1) N = std::atoi(argv[1]);
-  if (argc > 2) D = std::atoi(argv[2]);
-  if (argc > 3) S = std::atoi(argv[3]);
+  if (argc > 1)
+    N = std::atoi(argv[1]);
+  if (argc > 2)
+    D = std::atoi(argv[2]);
+  if (argc > 3)
+    S = std::atoi(argv[3]);
 
   if (D == 1 && size > 1) {
-    if (rank == 0) std::cerr << "Error: D=1 test cannot be run with multiple processes." << std::endl;
+    if (rank == 0)
+      std::cerr << "Error: D=1 test cannot be run with multiple processes."
+                << std::endl;
     MPI_Finalize();
     return 1;
   }
 
-  if (N <= 0) N = (D >= 4) ? 16 : 32;
+  if (N <= 0)
+    N = (D >= 4) ? 16 : 32;
 
   if (rank == 0) {
     std::cout << "########################################" << std::endl;
     std::cout << "# TEST: c2c/fftw_mpi_c2c_roundtrip_nd" << std::endl;
-    std::cout << "# D = " << D << ",  N = " << N << ",  S = " << parafaft_test::shape_name(S) << std::endl;
+    std::cout << "# D = " << D << ",  N = " << N
+              << ",  S = " << parafaft_test::shape_name(S) << std::endl;
     std::cout << "########################################" << std::endl;
   }
 

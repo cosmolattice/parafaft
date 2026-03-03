@@ -16,7 +16,7 @@
 // sanity check is skipped.
 // ============================================================================
 
-#include "../../parafaft_generic.hpp"
+#include "../../parafaft_c2c.hpp"
 #include "../test_helpers.hpp"
 
 #include <cmath>

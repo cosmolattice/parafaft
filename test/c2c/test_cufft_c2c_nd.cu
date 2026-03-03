@@ -16,7 +16,7 @@
 // sanity check is skipped.
 // ============================================================================
 
-#include "../../parafaft_generic.hpp"
+#include "../../parafaft_c2c.hpp"
 #include "../test_helpers.hpp"
 
 #include <cmath>
@@ -28,13 +28,13 @@
 // ============================================================================
 // Templated comparison: parafaft(cuFFT) vs serial FFTW reference.
 // ============================================================================
-template <int D> int compare_cuFFTBackend(const int N, int rank, int shape_id)
-{
+template <int D> int compare_cuFFTBackend(const int N, int rank, int shape_id) {
   using namespace parafaft_test;
 
   if (rank == 0) {
     std::cout << "\n==========================================" << std::endl;
-    std::cout << "Testing parafaft CuFFTBackend for " << D << "D C2C transform of size ";
+    std::cout << "Testing parafaft CuFFTBackend for " << D
+              << "D C2C transform of size ";
     std::array<int, D> s;
     s.fill(N);
     print_shape<D>(std::cout, s.data());
@@ -80,8 +80,11 @@ template <int D> int compare_cuFFTBackend(const int N, int rank, int shape_id)
 
   // ---- Copy to device -------------------------------------------------------
   parafaft::CuFFTBackend::Complex *d_data = nullptr;
-  cudaMalloc((void **)&d_data, local_size * sizeof(parafaft::CuFFTBackend::Complex));
-  cudaMemcpy(d_data, local_data.data(), local_size * sizeof(parafaft::CuFFTBackend::Complex), cudaMemcpyHostToDevice);
+  cudaMalloc((void **)&d_data,
+             local_size * sizeof(parafaft::CuFFTBackend::Complex));
+  cudaMemcpy(d_data, local_data.data(),
+             local_size * sizeof(parafaft::CuFFTBackend::Complex),
+             cudaMemcpyHostToDevice);
 
   // ---- Forward FFT ----------------------------------------------------------
   fft.forward(d_data);
@@ -92,7 +95,9 @@ template <int D> int compare_cuFFTBackend(const int N, int rank, int shape_id)
   fft.get_final_shape(final_shape);
   fft.get_final_start(final_start);
 
-  cudaMemcpy(local_data.data(), d_data, local_size * sizeof(parafaft::CuFFTBackend::Complex), cudaMemcpyDeviceToHost);
+  cudaMemcpy(local_data.data(), d_data,
+             local_size * sizeof(parafaft::CuFFTBackend::Complex),
+             cudaMemcpyDeviceToHost);
   cudaFree(d_data);
 
   // ---- Compare against reference --------------------------------------------
@@ -105,20 +110,27 @@ template <int D> int compare_cuFFTBackend(const int N, int rank, int shape_id)
 
     int global_flat = nd_index<D>(gidx, full_shape);
     int local_flat = nd_index<D>(fidx.data(), final_shape);
-    double error = std::abs(local_data[local_flat] - global_fftw_reference[global_flat]);
-    if (error > max_error) max_error = error;
+    double error =
+        std::abs(local_data[local_flat] - global_fftw_reference[global_flat]);
+    if (error > max_error)
+      max_error = error;
   });
 
   const double tolerance = 1e-10;
   const bool local_success = (max_error < tolerance);
   int global_success = local_success ? 1 : 0;
-  MPI_Allreduce(MPI_IN_PLACE, &global_success, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+  MPI_Allreduce(MPI_IN_PLACE, &global_success, 1, MPI_INT, MPI_MIN,
+                MPI_COMM_WORLD);
 
   if (global_success == 1 && rank == 0) {
-    std::cout << "Test passed: parafaft CuFFTBackend produces correct results." << std::endl;
+    std::cout << "Test passed: parafaft CuFFTBackend produces correct results."
+              << std::endl;
     std::cout << "Maximum error: " << max_error << std::endl;
   } else if (!global_success) {
-    std::cout << "Rank " << rank << ": Test failed: parafaft CuFFTBackend produces incorrect results." << std::endl;
+    std::cout
+        << "Rank " << rank
+        << ": Test failed: parafaft CuFFTBackend produces incorrect results."
+        << std::endl;
     std::cout << "Maximum error: " << max_error << std::endl;
     return 1;
   }
@@ -129,8 +141,7 @@ template <int D> int compare_cuFFTBackend(const int N, int rank, int shape_id)
 // ============================================================================
 // Dispatch
 // ============================================================================
-int dispatch(int D, int N, int rank, int shape_id)
-{
+int dispatch(int D, int N, int rank, int shape_id) {
   using namespace parafaft_test;
   int failures = 0;
 
@@ -161,7 +172,9 @@ int dispatch(int D, int N, int rank, int shape_id)
     failures += compare_cuFFTBackend<6>(N, rank, shape_id);
     break;
   default:
-    if (rank == 0) std::cerr << "Unsupported dimensionality D=" << D << " (supported: 2..6)" << std::endl;
+    if (rank == 0)
+      std::cerr << "Unsupported dimensionality D=" << D << " (supported: 2..6)"
+                << std::endl;
     return 1;
   }
 
@@ -171,8 +184,7 @@ int dispatch(int D, int N, int rank, int shape_id)
 // ============================================================================
 // Main
 // ============================================================================
-int main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
   MPI_Init(&argc, &argv);
   int rank, size;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -182,22 +194,29 @@ int main(int argc, char **argv)
   int N = -1;
   int S = 0;
 
-  if (argc > 1) N = std::atoi(argv[1]);
-  if (argc > 2) D = std::atoi(argv[2]);
-  if (argc > 3) S = std::atoi(argv[3]);
+  if (argc > 1)
+    N = std::atoi(argv[1]);
+  if (argc > 2)
+    D = std::atoi(argv[2]);
+  if (argc > 3)
+    S = std::atoi(argv[3]);
 
   if (D == 1 && size > 1) {
-    if (rank == 0) std::cerr << "Error: D=1 test cannot be run with multiple processes." << std::endl;
+    if (rank == 0)
+      std::cerr << "Error: D=1 test cannot be run with multiple processes."
+                << std::endl;
     MPI_Finalize();
     return 1;
   }
 
-  if (N <= 0) N = (D >= 4) ? 16 : 32;
+  if (N <= 0)
+    N = (D >= 4) ? 16 : 32;
 
   if (rank == 0) {
     std::cout << "########################################" << std::endl;
     std::cout << "# TEST: c2c/cufft_mpi_c2c_gaussian_nd" << std::endl;
-    std::cout << "# D = " << D << ",  N = " << N << ",  S = " << parafaft_test::shape_name(S) << std::endl;
+    std::cout << "# D = " << D << ",  N = " << N
+              << ",  S = " << parafaft_test::shape_name(S) << std::endl;
     std::cout << "########################################" << std::endl;
   }
 

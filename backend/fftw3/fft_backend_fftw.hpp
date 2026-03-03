@@ -59,10 +59,11 @@ namespace parafaft
      * @brief Construct an FFTW backend with storage for the given number of stages.
      *
      * @param num_stages Number of FFT stages (typically D for D-dimensional transform)
+     * @param plan_flag Planning strategy (default: Estimate for quick planning)
      */
-    explicit FFTWBackend(int num_stages)
+    explicit FFTWBackend(int num_stages, FFTPlanFlag plan_flag = FFTPlanFlag::Estimate)
         : forward_plans_(num_stages, nullptr), backward_plans_(num_stages, nullptr), backend_type_(FFTBackendType::Serial),
-          num_threads_(1)
+          num_threads_(1), plan_flag_(convertPlanFlag(plan_flag))
     {
 #if defined(PARAFAFT_FFTW_THREADS)
       backend_type_ = FFTBackendType::Threads;
@@ -82,10 +83,11 @@ namespace parafaft
      *
      * @param num_stages Number of FFT stages (typically D for D-dimensional transform)
      * @param comm MPI communicator (used to determine number of MPI tasks for thread count)
+     * @param plan_flag Planning strategy (default: Estimate for quick planning)
      */
-    explicit FFTWBackend(int num_stages, MPI_Comm comm)
+    explicit FFTWBackend(int num_stages, MPI_Comm comm, FFTPlanFlag plan_flag = FFTPlanFlag::Estimate)
         : forward_plans_(num_stages, nullptr), backward_plans_(num_stages, nullptr), backend_type_(FFTBackendType::Serial),
-          num_threads_(1)
+          num_threads_(1), plan_flag_(convertPlanFlag(plan_flag))
     {
 #if defined(PARAFAFT_FFTW_THREADS)
       backend_type_ = FFTBackendType::Threads;
@@ -106,7 +108,8 @@ namespace parafaft
      * @brief Create and store FFTW plans for a specific stage (C2C transforms).
      *
      * Creates both forward and backward plans for the given stage, using the
-     * FFTW_ESTIMATE flag for quick planning.
+     * configured planning flag (FFTW_ESTIMATE by default, configurable via
+     * constructor).
      *
      * @param stage Stage index for plan storage (0 to num_stages-1)
      * @param length FFT length (number of complex elements per transform)
@@ -122,11 +125,11 @@ namespace parafaft
 
       // Create forward plan (bound to data pointer)
       forward_plans_[stage] = fftw_plan_many_dft(1, n, batch, fftw_data, NULL, stride, dist, fftw_data, NULL, stride,
-                                                 dist, FFTW_FORWARD, FFTW_ESTIMATE);
+                                                 dist, FFTW_FORWARD, plan_flag_);
 
       // Create backward plan (bound to data pointer)
       backward_plans_[stage] = fftw_plan_many_dft(1, n, batch, fftw_data, NULL, stride, dist, fftw_data, NULL, stride,
-                                                  dist, FFTW_BACKWARD, FFTW_ESTIMATE);
+                                                  dist, FFTW_BACKWARD, plan_flag_);
     }
 
     /**
@@ -156,7 +159,7 @@ namespace parafaft
       r2c_inplace_plan_ =
           fftw_plan_many_dft_r2c(1, n, batch, padded_real, NULL, stride, dist, // real input (dist in doubles)
                                  fftw_data, NULL, stride, dist / 2,            // complex output (dist/2 in complex)
-                                 FFTW_ESTIMATE);
+                                 plan_flag_);
     }
 
     /**
@@ -198,7 +201,7 @@ namespace parafaft
       // In-place C2R: complex → real in same buffer
       c2r_inplace_plan_ =
           fftw_plan_many_dft_c2r(1, n, batch, fftw_data, NULL, stride, dist / 2, // dist/2 for complex stride
-                                 padded_real, NULL, stride, dist, FFTW_ESTIMATE);
+                                 padded_real, NULL, stride, dist, plan_flag_);
     }
 
     /**
@@ -256,6 +259,10 @@ namespace parafaft
       }
       if (r2c_inplace_plan_) fftw_destroy_plan(r2c_inplace_plan_);
       if (c2r_inplace_plan_) fftw_destroy_plan(c2r_inplace_plan_);
+
+#if defined(PARAFAFT_FFTW_THREADS) || defined(PARAFAFT_FFTW_OMP)
+      fftw_cleanup_threads();
+#endif
     }
 
     /// @brief Deleted copy constructor (FFTW plans cannot be safely copied)
@@ -273,12 +280,55 @@ namespace parafaft
      */
     FFTWBackend(FFTWBackend &&other) noexcept
         : forward_plans_(std::move(other.forward_plans_)), backward_plans_(std::move(other.backward_plans_)),
-          r2c_inplace_plan_(other.r2c_inplace_plan_), c2r_inplace_plan_(other.c2r_inplace_plan_)
+          r2c_inplace_plan_(other.r2c_inplace_plan_), c2r_inplace_plan_(other.c2r_inplace_plan_),
+          plan_flag_(other.plan_flag_)
     {
       std::fill(other.forward_plans_.begin(), other.forward_plans_.end(), nullptr);
       std::fill(other.backward_plans_.begin(), other.backward_plans_.end(), nullptr);
       other.r2c_inplace_plan_ = nullptr;
       other.c2r_inplace_plan_ = nullptr;
+    }
+
+    // ========== FFTW Wisdom Support ==========
+
+    /**
+     * @brief Export accumulated FFTW wisdom to a file.
+     *
+     * Saves the current FFTW planning results (wisdom) so they can be reloaded
+     * in future runs, avoiding re-benchmarking when using FFTW_MEASURE or
+     * FFTW_PATIENT. Only meaningful when plans were created with Measure or Patient.
+     *
+     * @param filename Path to the wisdom file to create/overwrite.
+     * @return true if wisdom was successfully exported, false otherwise.
+     */
+    static bool exportWisdom(const char *filename)
+    {
+      return fftw_export_wisdom_to_filename(filename) != 0;
+    }
+
+    /**
+     * @brief Import FFTW wisdom from a file.
+     *
+     * Loads previously saved planning results. Must be called before constructing
+     * the backend (i.e., before plan creation) for the wisdom to take effect.
+     *
+     * @param filename Path to the wisdom file to read.
+     * @return true if wisdom was successfully imported, false otherwise.
+     */
+    static bool importWisdom(const char *filename)
+    {
+      return fftw_import_wisdom_from_filename(filename) != 0;
+    }
+
+    /**
+     * @brief Discard all accumulated FFTW wisdom.
+     *
+     * Clears the internal wisdom database. Subsequent plans will be created
+     * from scratch.
+     */
+    static void forgetWisdom()
+    {
+      fftw_forget_wisdom();
     }
 
   private:
@@ -289,6 +339,26 @@ namespace parafaft
 
     FFTBackendType backend_type_; ///< Threading backend type
     int num_threads_;              ///< Number of threads for FFTW
+    unsigned plan_flag_;           ///< FFTW planning flag (FFTW_ESTIMATE, FFTW_MEASURE, etc.)
+
+    /**
+     * @brief Convert FFTPlanFlag enum to FFTW's unsigned flag value.
+     *
+     * @param flag The FFTPlanFlag enum value
+     * @return Corresponding FFTW flag constant
+     */
+    static unsigned convertPlanFlag(FFTPlanFlag flag)
+    {
+      switch (flag) {
+      case FFTPlanFlag::Measure:
+        return FFTW_MEASURE;
+      case FFTPlanFlag::Patient:
+        return FFTW_PATIENT;
+      case FFTPlanFlag::Estimate:
+      default:
+        return FFTW_ESTIMATE;
+      }
+    }
 
     /**
      * @brief Detect optimal thread count based on environment and hardware.

@@ -130,10 +130,12 @@ namespace parafaft
       * @brief Construct a cuFFT backend with storage for the given number of stages.
       *
       * @param num_stages Number of FFT stages (typically D for D-dimensional transform)
+      * @param plan_flag Planning strategy (ignored for cuFFT, accepted for API compatibility)
       */
-    explicit CuFFTBackend(int num_stages)
+    explicit CuFFTBackend(int num_stages, FFTPlanFlag plan_flag = FFTPlanFlag::Estimate)
         : num_stages_(num_stages), forward_plans_(num_stages, 0), backward_plans_(num_stages, 0)
     {
+      (void)plan_flag; // cuFFT does not support configurable planning
     }
 
     /**
@@ -141,11 +143,13 @@ namespace parafaft
      *
      * @param num_stages Number of FFT stages
      * @param comm MPI communicator (unused for cuFFT, but provides API compatibility)
+     * @param plan_flag Planning strategy (ignored for cuFFT, accepted for API compatibility)
      */
-    explicit CuFFTBackend(int num_stages, MPI_Comm comm)
+    explicit CuFFTBackend(int num_stages, MPI_Comm comm, FFTPlanFlag plan_flag = FFTPlanFlag::Estimate)
         : num_stages_(num_stages), forward_plans_(num_stages, 0), backward_plans_(num_stages, 0)
     {
       (void)comm; // Suppress unused parameter warning
+      (void)plan_flag; // cuFFT does not support configurable planning
     }
 
     /**
