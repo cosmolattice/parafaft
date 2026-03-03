@@ -7,7 +7,7 @@ ParaFaFT (**Para**llel **Fa**st **F**ourier **T**ransform) provides a C++ implem
 
 - **Dimension-agnostic**: Generic template supports arbitrary dimensions $D \geq 2$.
 - **C2C and R2C/C2R**:
-  - `parafaft_generic.hpp`: Provides through `ParaFaFT<D>`, complex fourier transforms for arbitrary dimensions.
+  - `parafaft_c2c.hpp`: Provides through `ParaFaFT<D>`, complex fourier transforms for arbitrary dimensions.
   - `parafaft_r2c.hpp`: Provides through `ParaFaFT_R2C<D>`, real-to-complex and complex-to-real transforms with memory-efficient layouts.
 - **No local transposes**: Uses MPI subarray datatypes with `MPI_Alltoallw` to eliminate local data rearrangements
 - **Supported FFT backends**:
@@ -109,7 +109,7 @@ target_link_libraries(your_target PRIVATE parafaft::parafaft)
 ### Complex-to-Complex (C2C) Transform
 
 ```cpp
-#include "parafaft_generic.hpp"
+#include "parafaft_c2c.hpp"
 
 int main(int argc, char** argv) {
     MPI_Init(&argc, &argv);
