@@ -1,5 +1,5 @@
-#include "../parafaft_generic.hpp"
 #include "../backend/fftw3/fft_backend_fftw.hpp"
+#include "../parafaft_generic.hpp"
 #include "bench_helpers.hpp"
 
 #include <cmath>
@@ -8,16 +8,17 @@
 #include <mpi.h>
 #include <vector>
 
-template <int D> void run_benchmark(int N, int rank, int mpi_size, int iterations)
-{
+template <int D>
+void run_benchmark(int N, int rank, int mpi_size, int iterations) {
   using namespace parafaft_bench;
 
   int num_threads = detect_thread_count(MPI_COMM_WORLD);
 
   if (rank == 0) {
     std::cout << "\n==========================================" << std::endl;
-    std::cout << "Benchmark: ParaFaFT C2C " << D << "D, N=" << N << ", MPI procs=" << mpi_size
-              << ", FFTW threads=" << num_threads << ", iterations=" << iterations << std::endl;
+    std::cout << "Benchmark: ParaFaFT C2C " << D << "D, N=" << N
+              << ", MPI procs=" << mpi_size << ", FFTW threads=" << num_threads
+              << ", iterations=" << iterations << std::endl;
   }
 
   std::array<int, D> global_shape;
@@ -43,7 +44,8 @@ template <int D> void run_benchmark(int N, int rank, int mpi_size, int iteration
       r2 += x * x;
     }
     int local_flat = nd_index<D>(lidx.data(), local_shape);
-    local_data[local_flat] = std::complex<double>(std::exp(-r2 / (2.0 * sigma * sigma)), 0.0);
+    local_data[local_flat] =
+        std::complex<double>(std::exp(-r2 / (2.0 * sigma * sigma)), 0.0);
   });
 
   Statistics parafaft_stats;
@@ -68,6 +70,11 @@ template <int D> void run_benchmark(int N, int rank, int mpi_size, int iteration
     parafaft_stats.add(elapsed);
   }
 
+  // fftw_init_threads() must be called before fftw_mpi_init()
+  // (see FFTW docs: "Combining MPI and Threads")
+  parafaft_bench::init_fftw_threads(MPI_COMM_WORLD);
+  parafaft_bench::init_fftw_mpi();
+
   FFTWMPIReferenceCtoC<D> fftw_ref(N, MPI_COMM_WORLD);
 
   for (int iter = 0; iter < 5; ++iter)
@@ -90,19 +97,19 @@ template <int D> void run_benchmark(int N, int rank, int mpi_size, int iteration
 
   if (rank == 0) {
 
-    std::cout << "ParaFaFT: mean=" << parafaft_mean << "s, std=" << parafaft_std << "s" << std::endl;
-    std::cout << "FFTW:     mean=" << fftw_mean << "s, std=" << fftw_std << "s" << std::endl;
+    std::cout << "ParaFaFT: mean=" << parafaft_mean << "s, std=" << parafaft_std
+              << "s" << std::endl;
+    std::cout << "FFTW:     mean=" << fftw_mean << "s, std=" << fftw_std << "s"
+              << std::endl;
 
-    write_csv("bench_c2c.csv", mpi_size, num_threads, N, parafaft_mean, parafaft_std, fftw_mean, fftw_std, iterations);
+    write_csv("bench_c2c.csv", mpi_size, num_threads, N, parafaft_mean,
+              parafaft_std, fftw_mean, fftw_std, iterations);
     std::cout << "CSV written to bench_c2c.csv" << std::endl;
   }
 }
 
-int main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
   MPI_Init(&argc, &argv);
-
-  parafaft_bench::init_fftw_mpi();
 
   int rank, mpi_size;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -119,11 +126,11 @@ int main(int argc, char **argv)
   } else if (argc > 1) {
     D = std::atoi(argv[1]);
   }
-  if (argc > 3) iterations = std::atoi(argv[3]);
+  if (argc > 3)
+    iterations = std::atoi(argv[3]);
 
-  if (D >= 4 && !explicit_n) N = 16;
-
-  parafaft_bench::init_fftw_threads(MPI_COMM_WORLD);
+  if (D >= 4 && !explicit_n)
+    N = 16;
 
   switch (D) {
   case 2:
@@ -143,7 +150,8 @@ int main(int argc, char **argv)
     break;
   default:
     if (rank == 0) {
-      std::cerr << "Unsupported dimensions: " << D << " (supported: 2-6)" << std::endl;
+      std::cerr << "Unsupported dimensions: " << D << " (supported: 2-6)"
+                << std::endl;
     }
   }
 
