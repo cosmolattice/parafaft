@@ -85,8 +85,8 @@ inline void decompose(int N, int M, int p, int &n, int &s) {
  */
 inline void subarray(MPI_Datatype datatype, int ndims, const int sizes[],
                      int axis, int nparts, MPI_Datatype subarrays[]) {
-  // Use a fixed-size stack buffer for subsizes/substarts (max 16 dimensions)
-  int subsizes[16], substarts[16];
+  // Use a fixed-size stack buffer for subsizes/substarts
+  std::vector<int> subsizes(ndims), substarts(ndims);
 
   // Initialize: full size in all dimensions, starting at origin
   for (int i = 0; i < ndims; i++) {
@@ -103,8 +103,8 @@ inline void subarray(MPI_Datatype datatype, int ndims, const int sizes[],
 
     // MPI_Type_create_subarray describes the discontiguous memory layout
     // This is the key innovation - no need to pack/unpack data manually
-    MPI_Type_create_subarray(ndims, sizes, subsizes, substarts, MPI_ORDER_C,
-                             datatype, &subarrays[p]);
+    MPI_Type_create_subarray(ndims, sizes, subsizes.data(), substarts.data(),
+                             MPI_ORDER_C, datatype, &subarrays[p]);
     MPI_Type_commit(&subarrays[p]);
   }
 }
