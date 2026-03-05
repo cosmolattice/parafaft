@@ -33,42 +33,45 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
   fft.get_local_shape(local_shape);
   fft.get_global_start(global_start);
 
-  std::vector<std::complex<double>> local_data(buffer_size);
-
-  const double center = N / 2.0;
-  const double sigma = 4.0;
-
-  iterate_nd<D>(local_shape, [&](const std::array<int, D> &lidx) {
-    double r2 = 0.0;
-    for (int d = 0; d < D; ++d) {
-      double x = (global_start[d] + lidx[d]) - center;
-      r2 += x * x;
-    }
-    int local_flat = nd_index<D>(lidx.data(), local_shape);
-    local_data[local_flat] =
-        std::complex<double>(std::exp(-r2 / (2.0 * sigma * sigma)), 0.0);
-  });
-
   Statistics parafaft_stats;
   Statistics fftw_stats;
 
-  MPI_Barrier(MPI_COMM_WORLD);
+  {
 
-  for (int iter = 0; iter < 5; ++iter) {
-    auto local_copy = local_data;
-    fft.forward(local_copy.data());
-    fft.backward(local_copy.data());
-  }
+    std::vector<std::complex<double>> local_data(buffer_size);
 
-  for (int iter = 0; iter < iterations; ++iter) {
-    auto local_copy = local_data;
+    const double center = N / 2.0;
+    const double sigma = 4.0;
+
+    iterate_nd<D>(local_shape, [&](const std::array<int, D> &lidx) {
+      double r2 = 0.0;
+      for (int d = 0; d < D; ++d) {
+        double x = (global_start[d] + lidx[d]) - center;
+        r2 += x * x;
+      }
+      int local_flat = nd_index<D>(lidx.data(), local_shape);
+      local_data[local_flat] =
+          std::complex<double>(std::exp(-r2 / (2.0 * sigma * sigma)), 0.0);
+    });
+
     MPI_Barrier(MPI_COMM_WORLD);
-    double start = MPI_Wtime();
-    fft.forward(local_copy.data());
-    fft.backward(local_copy.data());
-    MPI_Barrier(MPI_COMM_WORLD);
-    double elapsed = MPI_Wtime() - start;
-    parafaft_stats.add(elapsed);
+
+    for (int iter = 0; iter < 5; ++iter) {
+      auto local_copy = local_data;
+      fft.forward(local_copy.data());
+      fft.backward(local_copy.data());
+    }
+
+    for (int iter = 0; iter < iterations; ++iter) {
+      auto local_copy = local_data;
+      MPI_Barrier(MPI_COMM_WORLD);
+      double start = MPI_Wtime();
+      fft.forward(local_copy.data());
+      fft.backward(local_copy.data());
+      MPI_Barrier(MPI_COMM_WORLD);
+      double elapsed = MPI_Wtime() - start;
+      parafaft_stats.add(elapsed);
+    }
   }
 
   // fftw_init_threads() must be called before fftw_mpi_init()

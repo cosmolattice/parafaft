@@ -34,47 +34,49 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
 
   const int padded_last = local_real_shape[D - 1] + 2;
 
-  std::vector<double> padded_buffer(local_padded_size, 0.0);
-
-  const double center = N / 2.0;
-  const double sigma = 4.0;
-
-  iterate_nd<D>(local_real_shape, [&](const std::array<int, D> &lidx) {
-    double r2 = 0.0;
-    for (int d = 0; d < D; ++d) {
-      double x = (real_start[d] + lidx[d]) - center;
-      r2 += x * x;
-    }
-    double value = std::exp(-r2 / (2.0 * sigma * sigma));
-
-    int padded_flat = lidx[0];
-    for (int d = 1; d < D - 1; ++d)
-      padded_flat = padded_flat * local_real_shape[d] + lidx[d];
-    padded_flat = padded_flat * padded_last + lidx[D - 1];
-
-    padded_buffer[padded_flat] = value;
-  });
-
   Statistics parafaft_stats;
   Statistics fftw_stats;
 
-  MPI_Barrier(MPI_COMM_WORLD);
+  {
+    std::vector<double> padded_buffer(local_padded_size, 0.0);
 
-  for (int iter = 0; iter < 5; ++iter) {
-    auto padded_copy = padded_buffer;
-    fft.forward_in_place(padded_copy.data());
-    fft.backward_in_place(padded_copy.data());
-  }
+    const double center = N / 2.0;
+    const double sigma = 4.0;
 
-  for (int iter = 0; iter < iterations; ++iter) {
-    auto padded_copy = padded_buffer;
+    iterate_nd<D>(local_real_shape, [&](const std::array<int, D> &lidx) {
+      double r2 = 0.0;
+      for (int d = 0; d < D; ++d) {
+        double x = (real_start[d] + lidx[d]) - center;
+        r2 += x * x;
+      }
+      double value = std::exp(-r2 / (2.0 * sigma * sigma));
+
+      int padded_flat = lidx[0];
+      for (int d = 1; d < D - 1; ++d)
+        padded_flat = padded_flat * local_real_shape[d] + lidx[d];
+      padded_flat = padded_flat * padded_last + lidx[D - 1];
+
+      padded_buffer[padded_flat] = value;
+    });
+
     MPI_Barrier(MPI_COMM_WORLD);
-    double start = MPI_Wtime();
-    fft.forward_in_place(padded_copy.data());
-    fft.backward_in_place(padded_copy.data());
-    MPI_Barrier(MPI_COMM_WORLD);
-    double elapsed = MPI_Wtime() - start;
-    parafaft_stats.add(elapsed);
+
+    for (int iter = 0; iter < 5; ++iter) {
+      auto padded_copy = padded_buffer;
+      fft.forward_in_place(padded_copy.data());
+      fft.backward_in_place(padded_copy.data());
+    }
+
+    for (int iter = 0; iter < iterations; ++iter) {
+      auto padded_copy = padded_buffer;
+      MPI_Barrier(MPI_COMM_WORLD);
+      double start = MPI_Wtime();
+      fft.forward_in_place(padded_copy.data());
+      fft.backward_in_place(padded_copy.data());
+      MPI_Barrier(MPI_COMM_WORLD);
+      double elapsed = MPI_Wtime() - start;
+      parafaft_stats.add(elapsed);
+    }
   }
 
   // fftw_init_threads() must be called before fftw_mpi_init()
