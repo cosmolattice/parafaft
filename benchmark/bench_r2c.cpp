@@ -24,20 +24,20 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
   std::array<int, D> global_shape;
   global_shape.fill(N);
 
-  parafaft::ParaFaFT_R2C<D, parafaft::FFTWBackend> fft(global_shape.data());
-
-  int local_real_shape[D], real_start[D];
-  fft.get_local_real_shape(local_real_shape);
-  fft.get_real_global_start(real_start);
-
-  int local_padded_size = fft.get_required_output_size();
-
-  const int padded_last = local_real_shape[D - 1] + 2;
-
   Statistics parafaft_stats;
   Statistics fftw_stats;
 
   {
+    parafaft::ParaFaFT_R2C<D, parafaft::FFTWBackend> fft(global_shape.data());
+
+    int local_real_shape[D], real_start[D];
+    fft.get_local_real_shape(local_real_shape);
+    fft.get_real_global_start(real_start);
+
+    int local_padded_size = fft.get_required_output_size();
+
+    const int padded_last = local_real_shape[D - 1] + 2;
+
     std::vector<double> padded_buffer(local_padded_size, 0.0);
 
     const double center = N / 2.0;
@@ -62,17 +62,15 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
     MPI_Barrier(MPI_COMM_WORLD);
 
     for (int iter = 0; iter < 5; ++iter) {
-      auto padded_copy = padded_buffer;
-      fft.forward_in_place(padded_copy.data());
-      fft.backward_in_place(padded_copy.data());
+      fft.forward_in_place(padded_buffer.data());
+      fft.backward_in_place(padded_buffer.data());
     }
 
     for (int iter = 0; iter < iterations; ++iter) {
-      auto padded_copy = padded_buffer;
       MPI_Barrier(MPI_COMM_WORLD);
       double start = MPI_Wtime();
-      fft.forward_in_place(padded_copy.data());
-      fft.backward_in_place(padded_copy.data());
+      fft.forward_in_place(padded_buffer.data());
+      fft.backward_in_place(padded_buffer.data());
       MPI_Barrier(MPI_COMM_WORLD);
       double elapsed = MPI_Wtime() - start;
       parafaft_stats.add(elapsed);

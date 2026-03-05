@@ -24,19 +24,18 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
   std::array<int, D> global_shape;
   global_shape.fill(N);
 
-  parafaft::ParaFaFT<D, parafaft::FFTWBackend> fft(global_shape.data());
-
-  int local_size = fft.get_local_size();
-  int buffer_size = fft.get_required_output_size();
-  int local_shape[D];
-  int global_start[D];
-  fft.get_local_shape(local_shape);
-  fft.get_global_start(global_start);
-
   Statistics parafaft_stats;
   Statistics fftw_stats;
 
   {
+    parafaft::ParaFaFT<D, parafaft::FFTWBackend> fft(global_shape.data());
+
+    int local_size = fft.get_local_size();
+    int buffer_size = fft.get_required_output_size();
+    int local_shape[D];
+    int global_start[D];
+    fft.get_local_shape(local_shape);
+    fft.get_global_start(global_start);
 
     std::vector<std::complex<double>> local_data(buffer_size);
 
@@ -57,17 +56,15 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
     MPI_Barrier(MPI_COMM_WORLD);
 
     for (int iter = 0; iter < 5; ++iter) {
-      auto local_copy = local_data;
-      fft.forward(local_copy.data());
-      fft.backward(local_copy.data());
+      fft.forward(local_data.data());
+      fft.backward(local_data.data());
     }
 
     for (int iter = 0; iter < iterations; ++iter) {
-      auto local_copy = local_data;
       MPI_Barrier(MPI_COMM_WORLD);
       double start = MPI_Wtime();
-      fft.forward(local_copy.data());
-      fft.backward(local_copy.data());
+      fft.forward(local_data.data());
+      fft.backward(local_data.data());
       MPI_Barrier(MPI_COMM_WORLD);
       double elapsed = MPI_Wtime() - start;
       parafaft_stats.add(elapsed);
@@ -100,7 +97,6 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
   fftw_std = fftw_stats.stddev();
 
   if (rank == 0) {
-
     std::cout << "ParaFaFT: mean=" << parafaft_mean << "s, std=" << parafaft_std
               << "s" << std::endl;
     std::cout << "FFTW:     mean=" << fftw_mean << "s, std=" << fftw_std << "s"
