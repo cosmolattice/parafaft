@@ -142,6 +142,111 @@ inline void exchange(MPI_Comm comm, int nparts, void *arrayA,
                 subarraysB, comm);
 }
 
+/**
+ * @brief Packed exchange: manual pack → MPI_Alltoallv → unpack.
+ *
+ * Replaces MPI_Alltoallw with derived subarray types by explicitly packing
+ * non-contiguous data into contiguous GPU buffers, using MPI_Alltoallv
+ * (which supports GPU-direct for contiguous data), then unpacking.
+ *
+ * This avoids the slow host-staging fallback that most GPU-aware MPI
+ * implementations use for non-contiguous derived datatypes on device memory.
+ *
+ * Memory optimization: MPI receives into src_array (whose original data was
+ * already packed out), so only one extra buffer (pack_buf) is needed.
+ *
+ * @tparam BackendT FFT backend type (must provide memcpy2d)
+ * @param comm MPI subcommunicator for the redistribution
+ * @param nparts Number of partitions in the subcommunicator
+ * @param ndims Number of array dimensions
+ * @param src_array Source array (data to send, will be overwritten with
+ *                  received packed data as temporary storage)
+ * @param src_sizes Full array dimensions at the source stage
+ * @param src_axis Axis along which source data is partitioned for sending
+ * @param dst_array Destination array (will contain unpacked received data)
+ * @param dst_sizes Full array dimensions at the destination stage
+ * @param dst_axis Axis along which destination data is partitioned for
+ *                 receiving
+ * @param pack_buf Temporary buffer for packing (size >= total elements)
+ */
+template <typename BackendT>
+inline void exchange_packed(
+    MPI_Comm comm, int nparts, int ndims,
+    typename BackendT::Complex *src_array, const int src_sizes[], int src_axis,
+    typename BackendT::Complex *dst_array, const int dst_sizes[], int dst_axis,
+    typename BackendT::Complex *pack_buf)
+{
+  using Complex = typename BackendT::Complex;
+  int elem_size = sizeof(Complex);
+
+  // Compute send-side geometry
+  int src_leading = 1, src_trailing = 1;
+  for (int i = 0; i < src_axis; ++i) src_leading *= src_sizes[i];
+  for (int i = src_axis + 1; i < ndims; ++i) src_trailing *= src_sizes[i];
+
+  // Compute recv-side geometry
+  int dst_leading = 1, dst_trailing = 1;
+  for (int i = 0; i < dst_axis; ++i) dst_leading *= dst_sizes[i];
+  for (int i = dst_axis + 1; i < ndims; ++i) dst_trailing *= dst_sizes[i];
+
+  std::vector<int> send_counts(nparts), send_displs(nparts);
+  std::vector<int> recv_counts(nparts), recv_displs(nparts);
+
+  // Pack each partition into contiguous pack_buf
+  int send_offset = 0;
+  for (int p = 0; p < nparts; ++p) {
+    int n, s;
+    decompose(src_sizes[src_axis], nparts, p, n, s);
+    int count = src_leading * n * src_trailing;
+    send_counts[p] = count;
+    send_displs[p] = send_offset;
+
+    // Strided copy: src_leading rows, each n*src_trailing elements wide,
+    // with source stride src_sizes[src_axis]*src_trailing between rows
+    BackendT::memcpy2d(
+        reinterpret_cast<char *>(pack_buf) + send_offset * elem_size,
+        static_cast<size_t>(n) * src_trailing * elem_size,
+        reinterpret_cast<char *>(src_array) + static_cast<size_t>(s) * src_trailing * elem_size,
+        static_cast<size_t>(src_sizes[src_axis]) * src_trailing * elem_size,
+        static_cast<size_t>(n) * src_trailing * elem_size,
+        src_leading);
+
+    send_offset += count;
+  }
+
+  // Compute recv counts/displacements
+  int recv_offset = 0;
+  for (int p = 0; p < nparts; ++p) {
+    int n, s;
+    decompose(dst_sizes[dst_axis], nparts, p, n, s);
+    int count = dst_leading * n * dst_trailing;
+    recv_counts[p] = count;
+    recv_displs[p] = recv_offset;
+    recv_offset += count;
+  }
+
+  // MPI_Alltoallv with contiguous buffers (GPU-direct capable)
+  // Receive into src_array (reuse: its old data was already packed out)
+  MPI_Alltoallv(pack_buf, send_counts.data(), send_displs.data(),
+                MPI_C_DOUBLE_COMPLEX,
+                src_array, recv_counts.data(), recv_displs.data(),
+                MPI_C_DOUBLE_COMPLEX, comm);
+
+  // Unpack from src_array (contiguous received data) into dst_array
+  for (int p = 0; p < nparts; ++p) {
+    int n, s;
+    decompose(dst_sizes[dst_axis], nparts, p, n, s);
+
+    BackendT::memcpy2d(
+        reinterpret_cast<char *>(dst_array) + static_cast<size_t>(s) * dst_trailing * elem_size,
+        static_cast<size_t>(dst_sizes[dst_axis]) * dst_trailing * elem_size,
+        reinterpret_cast<char *>(src_array) + static_cast<size_t>(recv_displs[p]) * elem_size,
+        static_cast<size_t>(n) * dst_trailing * elem_size,
+        static_cast<size_t>(n) * dst_trailing * elem_size,
+        dst_leading);
+  }
+}
+
 // ============================================================================
 // ParaFaFT Class
 // ============================================================================
@@ -288,6 +393,11 @@ public:
     // ping-pong buffer; this scratch buffer serves as the other.
     scratch_buffer_.resize(max_stage_size_);
 
+    // Allocate pack buffer for manual packing exchange (GPU backends)
+    if constexpr (!Backend::use_alltoallw) {
+      pack_buffer_.resize(max_stage_size_);
+    }
+
     // Create FFT plans for all stages
     create_backend_plans();
   }
@@ -351,15 +461,17 @@ public:
     int finalized;
     MPI_Finalized(&finalized);
     if (!finalized) {
-      // Free cached MPI subarray datatypes
-      for (auto &types : fwd_send_types_) {
-        for (auto &t : types) {
-          MPI_Type_free(&t);
+      // Free cached MPI subarray datatypes (only created when using alltoallw)
+      if constexpr (Backend::use_alltoallw) {
+        for (auto &types : fwd_send_types_) {
+          for (auto &t : types) {
+            MPI_Type_free(&t);
+          }
         }
-      }
-      for (auto &types : fwd_recv_types_) {
-        for (auto &t : types) {
-          MPI_Type_free(&t);
+        for (auto &types : fwd_recv_types_) {
+          for (auto &t : types) {
+            MPI_Type_free(&t);
+          }
         }
       }
 
@@ -550,10 +662,18 @@ public:
       // Make the next axis local for the next FFT stage
       if (stage < D - 1) {
         int next_axis = D - 2 - stage; // Next axis to become local
-        exchange(subcomms_[next_axis], nparts_[stage], src,
-                 fwd_send_types_[stage].data(), dst,
-                 fwd_recv_types_[stage].data(), exchange_counts_.data(),
-                 exchange_displs_.data());
+        if constexpr (Backend::use_alltoallw) {
+          exchange(subcomms_[next_axis], nparts_[stage], src,
+                   fwd_send_types_[stage].data(), dst,
+                   fwd_recv_types_[stage].data(), exchange_counts_.data(),
+                   exchange_displs_.data());
+        } else {
+          exchange_packed<Backend>(
+              subcomms_[next_axis], nparts_[stage], D,
+              src, stage_shapes_[stage].data(), D - 1 - stage,
+              dst, stage_shapes_[stage + 1].data(), D - 2 - stage,
+              pack_buffer_.data());
+        }
         std::swap(src, dst);
       }
     }
@@ -621,10 +741,20 @@ public:
         // Backward exchange: send with fwd_recv types, recv with fwd_send types
         int trans = stage - 1;        // transition index
         int comm_idx = D - 1 - stage; // = axis
-        exchange(subcomms_[comm_idx], nparts_[trans], src,
-                 fwd_recv_types_[trans].data(), dst,
-                 fwd_send_types_[trans].data(), exchange_counts_.data(),
-                 exchange_displs_.data());
+        if constexpr (Backend::use_alltoallw) {
+          exchange(subcomms_[comm_idx], nparts_[trans], src,
+                   fwd_recv_types_[trans].data(), dst,
+                   fwd_send_types_[trans].data(), exchange_counts_.data(),
+                   exchange_displs_.data());
+        } else {
+          // Backward reverses forward: send from stage_shapes_[trans+1]
+          // along D-2-trans, recv into stage_shapes_[trans] along D-1-trans
+          exchange_packed<Backend>(
+              subcomms_[comm_idx], nparts_[trans], D,
+              src, stage_shapes_[trans + 1].data(), D - 2 - trans,
+              dst, stage_shapes_[trans].data(), D - 1 - trans,
+              pack_buffer_.data());
+        }
         std::swap(src, dst);
       }
     }
@@ -657,20 +787,23 @@ private:
       MPI_Comm_size(subcomms_[D - 2 - t], &nparts_[t]);
       max_nparts = std::max(max_nparts, nparts_[t]);
     }
-    exchange_counts_.assign(max_nparts, 1);
-    exchange_displs_.assign(max_nparts, 0);
 
-    for (int t = 0; t < D - 1; ++t) {
-      int send_axis = D - 1 - t; // axis distributed in stage t
-      int recv_axis = D - 2 - t; // axis distributed in stage t+1
+    if constexpr (Backend::use_alltoallw) {
+      exchange_counts_.assign(max_nparts, 1);
+      exchange_displs_.assign(max_nparts, 0);
 
-      fwd_send_types_[t].resize(nparts_[t]);
-      fwd_recv_types_[t].resize(nparts_[t]);
+      for (int t = 0; t < D - 1; ++t) {
+        int send_axis = D - 1 - t; // axis distributed in stage t
+        int recv_axis = D - 2 - t; // axis distributed in stage t+1
 
-      subarray(MPI_C_DOUBLE_COMPLEX, D, stage_shapes_[t].data(), send_axis,
-               nparts_[t], fwd_send_types_[t].data());
-      subarray(MPI_C_DOUBLE_COMPLEX, D, stage_shapes_[t + 1].data(), recv_axis,
-               nparts_[t], fwd_recv_types_[t].data());
+        fwd_send_types_[t].resize(nparts_[t]);
+        fwd_recv_types_[t].resize(nparts_[t]);
+
+        subarray(MPI_C_DOUBLE_COMPLEX, D, stage_shapes_[t].data(), send_axis,
+                 nparts_[t], fwd_send_types_[t].data());
+        subarray(MPI_C_DOUBLE_COMPLEX, D, stage_shapes_[t + 1].data(),
+                 recv_axis, nparts_[t], fwd_recv_types_[t].data());
+      }
     }
   }
 
@@ -829,6 +962,8 @@ private:
   int max_stage_size_;
   /// Scratch buffer for ping-pong with the user's data buffer
   ComplexBuffer scratch_buffer_;
+  /// Pack buffer for contiguous MPI exchange (GPU backends only)
+  ComplexBuffer pack_buffer_;
 
   /// Cached MPI subarray datatypes for forward send (D-1 transitions)
   std::vector<std::vector<MPI_Datatype>> fwd_send_types_;

@@ -22,6 +22,10 @@
 #include <string>
 #include "../fft_backend.hpp"
 
+#ifndef PARAFAFT_GPU_ALLTOALLW
+#define PARAFAFT_GPU_ALLTOALLW 0
+#endif
+
 namespace parafaft
 {
   /**
@@ -383,6 +387,19 @@ namespace parafaft
     static void memcpy(void *dest, const void *src, size_t bytes)
     {
       check_hip(hipMemcpy(dest, src, bytes, hipMemcpyDefault), "hipMemcpy general");
+    }
+
+    /// Use manual packing by default; opt-in to MPI_Alltoallw via PARAFAFT_GPU_ALLTOALLW
+    static constexpr bool use_alltoallw = static_cast<bool>(PARAFAFT_GPU_ALLTOALLW);
+
+    /**
+     * @brief 2D strided device memory copy via hipMemcpy2D.
+     */
+    static void memcpy2d(void *dst, size_t dpitch, const void *src,
+                         size_t spitch, size_t width, size_t height)
+    {
+      check_hip(hipMemcpy2D(dst, dpitch, src, spitch, width, height,
+                            hipMemcpyDefault), "hipMemcpy2D");
     }
 
   private:

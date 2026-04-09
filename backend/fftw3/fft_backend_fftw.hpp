@@ -246,6 +246,23 @@ namespace parafaft
      */
     static void memcpy(void *dest, const void *src, size_t bytes) { std::memcpy(dest, src, bytes); }
 
+    /// Always use MPI_Alltoallw with derived types on CPU (efficient)
+    static constexpr bool use_alltoallw = true;
+
+    /**
+     * @brief 2D strided memory copy.
+     *
+     * Copies `height` rows of `width` bytes each, with independent
+     * source and destination pitches (strides between rows).
+     */
+    static void memcpy2d(void *dst, size_t dpitch, const void *src,
+                         size_t spitch, size_t width, size_t height) {
+      for (size_t row = 0; row < height; ++row) {
+        std::memcpy(static_cast<char *>(dst) + row * dpitch,
+                    static_cast<const char *>(src) + row * spitch, width);
+      }
+    }
+
     /**
      * @brief Destructor. Cleans up all FFTW plans.
      */

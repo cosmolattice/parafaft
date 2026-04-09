@@ -10,11 +10,12 @@ option(PARAFAFT_CUDA "Enable CUDA support" OFF)
 option(PARAFAFT_HIP "Enable HIP support" OFF)
 option(PARAFAFT_TEST "Build tests" OFF)
 option(PARAFAFT_BENCHMARK "Build benchmarks" OFF)
+option(PARAFAFT_GPU_ALLTOALLW "Use MPI_Alltoallw with derived types for GPU backends" OFF)
 option(PARAFAFT_FFTW_THREADS "Use libfftw3_threads for threaded FFTW (preferred)" ON)
 option(PARAFAFT_FFTW_OMP "Use fftw3_omp for OpenMP-based threaded FFTW" ON)
 
 # Set C++ standard
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # CUDA support
@@ -121,6 +122,11 @@ endif()
 if(PARAFAFT_HIP AND CMAKE_HIP_COMPILER)
   target_link_libraries(parafaft INTERFACE hip::hipfft hip::host)
   target_compile_definitions(parafaft INTERFACE PARAFAFT_HIP_ENABLED)
+endif()
+
+# GPU alltoallw override (opt-in: use MPI derived types on GPU instead of manual packing)
+if(PARAFAFT_GPU_ALLTOALLW)
+  target_compile_definitions(parafaft INTERFACE PARAFAFT_GPU_ALLTOALLW=1)
 endif()
 
 # Add test subdirectory if enabled
