@@ -14,7 +14,7 @@ find_library(FFTW3_OMP_LIB fftw3_omp HINTS ${PARAFAFT_FFTW_LIB_DIR})
 mark_as_advanced(FFTW3_OMP_LIB)
 
 # If float support is enabled, find the single-precision FFTW libraries.
-if(Float)
+if(FLOAT)
   find_library(FFTW3F_LIB fftw3f HINTS ${PARAFAFT_FFTW_LIB_DIR})
   mark_as_advanced(FFTW3F_LIB)
   # Also find threaded versions if available
@@ -25,7 +25,7 @@ if(Float)
 endif()
 
 set(FFTW3_LIBRARIES ${FFTW3_LIB})
-if(Float)
+if(FLOAT)
   list(APPEND FFTW3_LIBRARIES ${FFTW3F_LIB})
 endif()
 
