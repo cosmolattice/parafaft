@@ -10,9 +10,17 @@ option(PARAFAFT_CUDA "Enable CUDA support" OFF)
 option(PARAFAFT_HIP "Enable HIP support" OFF)
 option(PARAFAFT_TEST "Build tests" OFF)
 option(PARAFAFT_BENCHMARK "Build benchmarks" OFF)
-option(PARAFAFT_GPU_ALLTOALLW "Use MPI_Alltoallw with derived types for GPU backends" OFF)
-option(PARAFAFT_FFTW_THREADS "Use libfftw3_threads for threaded FFTW (preferred)" ON)
+option(PARAFAFT_GPU_ALLTOALLW
+       "Use MPI_Alltoallw with derived types for GPU backends" OFF)
+option(PARAFAFT_FFTW_THREADS
+       "Use libfftw3_threads for threaded FFTW (preferred)" ON)
 option(PARAFAFT_FFTW_OMP "Use fftw3_omp for OpenMP-based threaded FFTW" ON)
+set(PARAFAFT_FFTW_DIR
+    ""
+    CACHE
+      PATH
+      "Path to FFTW installation (optional, can also be found via CMAKE_PREFIX_PATH)"
+)
 
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 17)
@@ -57,9 +65,11 @@ endif()
 find_package(MPI REQUIRED)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/fftw.cmake)
 
-# Determine threading strategy for FFTW
-# Priority: libfftw3_threads (POSIX) > fftw3_omp (OpenMP) > serial
-set(PARAFAFT_FFTW_THREADING "SERIAL" CACHE STRING "FFTW threading mode: Threads, OpenMP, or Serial")
+# Determine threading strategy for FFTW Priority: libfftw3_threads (POSIX) >
+# fftw3_omp (OpenMP) > serial
+set(PARAFAFT_FFTW_THREADING
+    "SERIAL"
+    CACHE STRING "FFTW threading mode: Threads, OpenMP, or Serial")
 
 if(PARAFAFT_FFTW_THREADS AND FFTW3_THREADS_LIB)
   set(PARAFAFT_FFTW_THREADING "Threads")
@@ -83,8 +93,8 @@ target_include_directories(
   parafaft INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
                      $<INSTALL_INTERFACE:include>)
 
-# Link dependencies
-# Order matters for static linking: threaded libs must come before main fftw3
+# Link dependencies Order matters for static linking: threaded libs must come
+# before main fftw3
 set(PARAFAFT_LINK_LIBRARIES MPI::MPI_CXX)
 
 # Add threading libraries first (they depend on fftw3)
@@ -124,7 +134,8 @@ if(PARAFAFT_HIP AND CMAKE_HIP_COMPILER)
   target_compile_definitions(parafaft INTERFACE PARAFAFT_HIP_ENABLED)
 endif()
 
-# GPU alltoallw override (opt-in: use MPI derived types on GPU instead of manual packing)
+# GPU alltoallw override (opt-in: use MPI derived types on GPU instead of manual
+# packing)
 if(PARAFAFT_GPU_ALLTOALLW)
   target_compile_definitions(parafaft INTERFACE PARAFAFT_GPU_ALLTOALLW=1)
 endif()
