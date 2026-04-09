@@ -1,10 +1,13 @@
 find_package(OpenMP)
 
-find_library(FFTW3_MPI_LIB fftw3_mpi)
+find_library(FFTW3_MPI_LIB fftw3_mpi HINTS ${FFTW_DIR}/lib)
 mark_as_advanced(FFTW3_MPI_LIB)
 
 if(NOT FFTW3_MPI_LIB)
-  message(FATAL_ERROR "fftw3_mpi is required for benchmarks but was not found. Please install FFTW with MPI support.")
+  message(
+    FATAL_ERROR
+      "fftw3_mpi is required for benchmarks but was not found. Please install FFTW with MPI support."
+  )
 endif()
 
 set(BENCHMARK_LINK_LIBS parafaft::parafaft)
@@ -26,11 +29,13 @@ endif()
 
 add_executable(bench_c2c bench_c2c.cpp)
 target_link_libraries(bench_c2c ${BENCHMARK_LINK_LIBS})
-set_target_properties(bench_c2c PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bench)
+set_target_properties(bench_c2c PROPERTIES RUNTIME_OUTPUT_DIRECTORY
+                                           ${CMAKE_BINARY_DIR}/bench)
 
 add_executable(bench_r2c bench_r2c.cpp)
 target_link_libraries(bench_r2c ${BENCHMARK_LINK_LIBS})
-set_target_properties(bench_r2c PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bench)
+set_target_properties(bench_r2c PROPERTIES RUNTIME_OUTPUT_DIRECTORY
+                                           ${CMAKE_BINARY_DIR}/bench)
 
 if(FFTW3_MPI_LIB)
   target_compile_definitions(bench_c2c PRIVATE PARAFAFT_FFTW_MPI)
