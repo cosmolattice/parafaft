@@ -15,11 +15,17 @@ option(PARAFAFT_GPU_ALLTOALLW
 option(PARAFAFT_FFTW_THREADS
        "Use libfftw3_threads for threaded FFTW (preferred)" ON)
 option(PARAFAFT_FFTW_OMP "Use fftw3_omp for OpenMP-based threaded FFTW" ON)
-set(PARAFAFT_FFTW_DIR
+set(PARAFAFT_FFTW_LIB_DIR
     ""
     CACHE
       PATH
-      "Path to FFTW installation (optional, can also be found via CMAKE_PREFIX_PATH)"
+      "Path to FFTW libraries installation (optional, can also be found via CMAKE_PREFIX_PATH)"
+)
+set(PARAFAFT_FFTW_INCLUDE_DIR
+    ""
+    CACHE
+      PATH
+      "Path to FFTW headers installation (optional, can also be found via CMAKE_PREFIX_PATH)"
 )
 
 # Set C++ standard
