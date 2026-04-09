@@ -322,8 +322,8 @@ public:
                  fwd_recv_types_[trans].data(), exchange_counts_.data(),
                  exchange_displs_.data());
       } else {
-        exchange_packed<Backend>(subcomms_[axis], nparts_[trans], D, src,
-                                 stage_output_shapes_[trans].data(),
+        exchange_packed<Backend>(backend_, subcomms_[axis], nparts_[trans], D,
+                                 src, stage_output_shapes_[trans].data(),
                                  D - 1 - trans, dst,
                                  stage_shapes_[trans + 1].data(), D - 2 - trans,
                                  pack_buffer_.data());
@@ -338,6 +338,7 @@ public:
 
     // After D-1 swaps, src points to padded_as_complex
     // Result is already in place - no copy needed
+    backend_.sync();
   }
 
   /**
@@ -360,6 +361,7 @@ public:
 
     // Copy real output from padded buffer
     copy_padded_to_real(reinterpret_cast<double *>(complex_input), real_output);
+    backend_.sync();
   }
 
   /**
@@ -422,9 +424,10 @@ public:
                  fwd_send_types_[trans].data(), exchange_counts_.data(),
                  exchange_displs_.data());
       } else {
-        exchange_packed<Backend>(subcomms_[axis], nparts_[trans], D, src,
-                                 stage_shapes_[trans + 1].data(), D - 2 - trans,
-                                 dst, stage_output_shapes_[trans].data(),
+        exchange_packed<Backend>(backend_, subcomms_[axis], nparts_[trans], D,
+                                 src, stage_shapes_[trans + 1].data(),
+                                 D - 2 - trans, dst,
+                                 stage_output_shapes_[trans].data(),
                                  D - 1 - trans, pack_buffer_.data());
       }
 
@@ -435,6 +438,7 @@ public:
     // After D-1 swaps, src points to padded_as_complex
     // Stage 0: In-place C2R FFT on padded buffer
     backend_.execute_c2r_inplace(padded_buffer);
+    backend_.sync();
   }
 
   /**

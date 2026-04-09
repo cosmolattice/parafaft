@@ -244,7 +244,7 @@ namespace parafaft
      * @param src Source pointer
      * @param bytes Number of bytes to copy
      */
-    static void memcpy(void *dest, const void *src, size_t bytes) { std::memcpy(dest, src, bytes); }
+    void memcpy(void *dest, const void *src, size_t bytes) const { std::memcpy(dest, src, bytes); }
 
     /// Always use MPI_Alltoallw with derived types on CPU (efficient)
     static constexpr bool use_alltoallw = true;
@@ -255,13 +255,16 @@ namespace parafaft
      * Copies `height` rows of `width` bytes each, with independent
      * source and destination pitches (strides between rows).
      */
-    static void memcpy2d(void *dst, size_t dpitch, const void *src,
-                         size_t spitch, size_t width, size_t height) {
+    void memcpy2d(void *dst, size_t dpitch, const void *src,
+                  size_t spitch, size_t width, size_t height) const {
       for (size_t row = 0; row < height; ++row) {
         std::memcpy(static_cast<char *>(dst) + row * dpitch,
                     static_cast<const char *>(src) + row * spitch, width);
       }
     }
+
+    /// No-op: CPU operations are synchronous
+    void sync() const {}
 
     /**
      * @brief Destructor. Cleans up all FFTW plans.

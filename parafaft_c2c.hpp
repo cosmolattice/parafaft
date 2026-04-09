@@ -171,6 +171,7 @@ inline void exchange(MPI_Comm comm, int nparts, void *arrayA,
  */
 template <typename BackendT>
 inline void exchange_packed(
+    const BackendT &backend,
     MPI_Comm comm, int nparts, int ndims,
     typename BackendT::Complex *src_array, const int src_sizes[], int src_axis,
     typename BackendT::Complex *dst_array, const int dst_sizes[], int dst_axis,
@@ -221,12 +222,13 @@ inline void exchange_packed(
   }
 
   // Pack src_array into pack_buf (skip when src is already contiguous)
+  // Pack is async on the backend stream, ordered after any preceding FFT.
   if (!src_contiguous) {
     for (int p = 0; p < nparts; ++p) {
       int n, s;
       decompose(src_sizes[src_axis], nparts, p, n, s);
       size_t row_bytes = static_cast<size_t>(n) * src_trailing * elem_size;
-      BackendT::memcpy2d(
+      backend.memcpy2d(
           reinterpret_cast<char *>(pack_buf) + static_cast<size_t>(send_displs[p]) * elem_size,
           row_bytes,
           reinterpret_cast<char *>(src_array) + static_cast<size_t>(s) * src_trailing * elem_size,
@@ -251,37 +253,59 @@ inline void exchange_packed(
     recv_into = src_array; // src_array free since we packed its data out
   }
 
-  // Pairwise send/recv with contiguous buffers.
-  // We use MPI_Sendrecv (point-to-point) instead of MPI_Alltoallv because
-  // collective accelerators (e.g. HCOLL) may not support GPU device pointers
-  // even when the underlying P2P transport (UCX) does.
+  // Sync stream: ensure all async pack/FFT operations are committed
+  // before MPI reads from the buffer (MPI is not stream-aware).
+  backend.sync();
+
+  // Non-blocking MPI: post receives first, then sends, overlap self-copy
+  // with network transfers. Uses point-to-point (not collectives) because
+  // collective accelerators (e.g. HCOLL) may not support GPU device pointers.
   int myrank;
   MPI_Comm_rank(comm, &myrank);
+  std::vector<MPI_Request> requests;
+  requests.reserve(2 * (nparts - 1));
+
   for (int p = 0; p < nparts; ++p) {
-    size_t send_byte_off = static_cast<size_t>(send_displs[p]) * elem_size;
+    if (p == myrank) continue;
     size_t recv_byte_off = static_cast<size_t>(recv_displs[p]) * elem_size;
-    if (p == myrank) {
-      BackendT::memcpy(
-          reinterpret_cast<char *>(recv_into) + recv_byte_off,
-          reinterpret_cast<char *>(send_from) + send_byte_off,
-          static_cast<size_t>(send_counts[p]) * elem_size);
-    } else {
-      MPI_Sendrecv(
-          reinterpret_cast<char *>(send_from) + send_byte_off,
-          send_counts[p], MPI_C_DOUBLE_COMPLEX, p, 0,
-          reinterpret_cast<char *>(recv_into) + recv_byte_off,
-          recv_counts[p], MPI_C_DOUBLE_COMPLEX, p, 0,
-          comm, MPI_STATUS_IGNORE);
-    }
+    MPI_Request req;
+    MPI_Irecv(reinterpret_cast<char *>(recv_into) + recv_byte_off,
+              recv_counts[p], MPI_C_DOUBLE_COMPLEX, p, 0, comm, &req);
+    requests.push_back(req);
+  }
+  for (int p = 0; p < nparts; ++p) {
+    if (p == myrank) continue;
+    size_t send_byte_off = static_cast<size_t>(send_displs[p]) * elem_size;
+    MPI_Request req;
+    MPI_Isend(reinterpret_cast<char *>(send_from) + send_byte_off,
+              send_counts[p], MPI_C_DOUBLE_COMPLEX, p, 0, comm, &req);
+    requests.push_back(req);
+  }
+
+  // Self-copy: async on GPU stream, overlaps with network transfers
+  {
+    size_t send_byte_off = static_cast<size_t>(send_displs[myrank]) * elem_size;
+    size_t recv_byte_off = static_cast<size_t>(recv_displs[myrank]) * elem_size;
+    backend.memcpy(
+        reinterpret_cast<char *>(recv_into) + recv_byte_off,
+        reinterpret_cast<char *>(send_from) + send_byte_off,
+        static_cast<size_t>(send_counts[myrank]) * elem_size);
+  }
+
+  // Wait for all remote transfers to complete
+  if (!requests.empty()) {
+    MPI_Waitall(static_cast<int>(requests.size()), requests.data(),
+                MPI_STATUSES_IGNORE);
   }
 
   // Unpack recv_into into dst_array (skip when dst is already contiguous)
+  // Async on stream, enqueued after MPI_Waitall guarantees data is valid.
   if (!dst_contiguous) {
     for (int p = 0; p < nparts; ++p) {
       int n, s;
       decompose(dst_sizes[dst_axis], nparts, p, n, s);
       size_t row_bytes = static_cast<size_t>(n) * dst_trailing * elem_size;
-      BackendT::memcpy2d(
+      backend.memcpy2d(
           reinterpret_cast<char *>(dst_array) + static_cast<size_t>(s) * dst_trailing * elem_size,
           static_cast<size_t>(dst_sizes[dst_axis]) * dst_trailing * elem_size,
           reinterpret_cast<char *>(recv_into) + static_cast<size_t>(recv_displs[p]) * elem_size,
@@ -714,7 +738,7 @@ public:
                    exchange_displs_.data());
         } else {
           exchange_packed<Backend>(
-              subcomms_[next_axis], nparts_[stage], D,
+              backend_, subcomms_[next_axis], nparts_[stage], D,
               src, stage_shapes_[stage].data(), D - 1 - stage,
               dst, stage_shapes_[stage + 1].data(), D - 2 - stage,
               pack_buffer_.data());
@@ -724,6 +748,7 @@ public:
     }
 
     // After D-1 swaps, src points to data — result is already in user's buffer
+    backend_.sync();
   }
 
   /**
@@ -795,7 +820,7 @@ public:
           // Backward reverses forward: send from stage_shapes_[trans+1]
           // along D-2-trans, recv into stage_shapes_[trans] along D-1-trans
           exchange_packed<Backend>(
-              subcomms_[comm_idx], nparts_[trans], D,
+              backend_, subcomms_[comm_idx], nparts_[trans], D,
               src, stage_shapes_[trans + 1].data(), D - 2 - trans,
               dst, stage_shapes_[trans].data(), D - 1 - trans,
               pack_buffer_.data());
@@ -805,6 +830,7 @@ public:
     }
 
     // After D-1 swaps, src points to data — result is already in user's buffer
+    backend_.sync();
   }
 
 private:

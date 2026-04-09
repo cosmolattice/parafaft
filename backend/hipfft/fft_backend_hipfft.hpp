@@ -140,6 +140,7 @@ namespace parafaft
         : num_stages_(num_stages), forward_plans_(num_stages, 0), backward_plans_(num_stages, 0)
     {
       (void)plan_flag; // hipFFT does not support configurable planning
+      check_hip(hipStreamCreate(&stream_), "hipStreamCreate");
     }
 
     /**
@@ -154,13 +155,15 @@ namespace parafaft
     {
       (void)comm; // Suppress unused parameter warning
       (void)plan_flag; // hipFFT does not support configurable planning
+      check_hip(hipStreamCreate(&stream_), "hipStreamCreate");
     }
 
     /**
-     * @brief Destructor. Cleans up all hipFFT plans.
+     * @brief Destructor. Cleans up stream and all hipFFT plans.
      */
     ~HipFFTBackend()
     {
+      if (stream_) { hipStreamSynchronize(stream_); hipStreamDestroy(stream_); }
       for (auto plan : forward_plans_) {
         if (plan) hipfftDestroy(plan);
       }
@@ -184,13 +187,15 @@ namespace parafaft
     HipFFTBackend(HipFFTBackend &&other) noexcept
         : num_stages_(other.num_stages_), forward_plans_(std::move(other.forward_plans_)),
           backward_plans_(std::move(other.backward_plans_)), r2c_plan_(other.r2c_plan_), c2r_plan_(other.c2r_plan_),
-          r2c_length_(other.r2c_length_), r2c_batch_(other.r2c_batch_), r2c_dist_(other.r2c_dist_)
+          r2c_length_(other.r2c_length_), r2c_batch_(other.r2c_batch_), r2c_dist_(other.r2c_dist_),
+          stream_(other.stream_)
     {
       // Clear moved-from object
       std::fill(other.forward_plans_.begin(), other.forward_plans_.end(), nullptr);
       std::fill(other.backward_plans_.begin(), other.backward_plans_.end(), nullptr);
       other.r2c_plan_ = 0;
       other.c2r_plan_ = 0;
+      other.stream_ = nullptr;
     }
 
     // ========== C2C Transform Methods ==========
@@ -223,11 +228,13 @@ namespace parafaft
       check_hipfft(
           hipfftPlanMany(&forward_plans_[stage], 1, n, inembed, stride, dist, onembed, stride, dist, HIPFFT_Z2Z, batch),
           "hipfftPlanMany C2C forward");
+      hipfftSetStream(forward_plans_[stage], stream_);
 
       // Create backward plan
       check_hipfft(hipfftPlanMany(&backward_plans_[stage], 1, n, inembed, stride, dist, onembed, stride, dist,
                                   HIPFFT_Z2Z, batch),
                    "hipfftPlanMany C2C backward");
+      hipfftSetStream(backward_plans_[stage], stream_);
     }
 
     /**
@@ -248,9 +255,6 @@ namespace parafaft
       hipfftDoubleComplex *hipfft_data = reinterpret_cast<hipfftDoubleComplex *>(data);
 
       check_hipfft(hipfftExecZ2Z(plan, hipfft_data, hipfft_data, hipfft_direction), "hipfftExecZ2Z");
-
-      // Synchronize
-      check_hip(hipDeviceSynchronize(), "hipDeviceSynchronize C2C");
     }
 
     // ========== R2C In-Place Transform Methods ==========
@@ -290,6 +294,7 @@ namespace parafaft
                                   onembed, stride, dist / 2,               // Complex output layout
                                   HIPFFT_D2Z, batch),
                    "hipfftPlanMany R2C");
+      hipfftSetStream(r2c_plan_, stream_);
     }
 
     /**
@@ -309,9 +314,6 @@ namespace parafaft
       // Execute R2C (D2Z = double to Z complex)
       // In-place: output overwrites input buffer
       check_hipfft(hipfftExecD2Z(r2c_plan_, input_data, output_data), "hipfftExecD2Z");
-
-      // Synchronize
-      check_hip(hipDeviceSynchronize(), "hipDeviceSynchronize R2C");
     }
 
     // ========== C2R In-Place Transform Methods ==========
@@ -350,6 +352,7 @@ namespace parafaft
                                   onembed, stride, dist,                       // Real output layout
                                   HIPFFT_Z2D, batch),
                    "hipfftPlanMany C2R");
+      hipfftSetStream(c2r_plan_, stream_);
     }
 
     /**
@@ -368,9 +371,6 @@ namespace parafaft
 
       // Execute C2R (Z2D = Z complex to double)
       check_hipfft(hipfftExecZ2D(c2r_plan_, input_data, output_data), "hipfftExecZ2D");
-
-      // Synchronize
-      check_hip(hipDeviceSynchronize(), "hipDeviceSynchronize C2R");
     }
 
     /**
@@ -384,22 +384,30 @@ namespace parafaft
      * @param bytes Number of bytes to copy
      * @throws std::runtime_error if the HIP memcpy operation fails
      */
-    static void memcpy(void *dest, const void *src, size_t bytes)
+    void memcpy(void *dest, const void *src, size_t bytes) const
     {
-      check_hip(hipMemcpy(dest, src, bytes, hipMemcpyDefault), "hipMemcpy general");
+      check_hip(hipMemcpyAsync(dest, src, bytes, hipMemcpyDefault, stream_), "hipMemcpyAsync");
     }
 
     /// Use manual packing by default; opt-in to MPI_Alltoallw via PARAFAFT_GPU_ALLTOALLW
     static constexpr bool use_alltoallw = static_cast<bool>(PARAFAFT_GPU_ALLTOALLW);
 
     /**
-     * @brief 2D strided device memory copy via hipMemcpy2D.
+     * @brief 2D strided async device memory copy on the backend stream.
      */
-    static void memcpy2d(void *dst, size_t dpitch, const void *src,
-                         size_t spitch, size_t width, size_t height)
+    void memcpy2d(void *dst, size_t dpitch, const void *src,
+                  size_t spitch, size_t width, size_t height) const
     {
-      check_hip(hipMemcpy2D(dst, dpitch, src, spitch, width, height,
-                            hipMemcpyDefault), "hipMemcpy2D");
+      check_hip(hipMemcpy2DAsync(dst, dpitch, src, spitch, width, height,
+                                  hipMemcpyDefault, stream_), "hipMemcpy2DAsync");
+    }
+
+    /**
+     * @brief Synchronize the backend stream.
+     */
+    void sync() const
+    {
+      check_hip(hipStreamSynchronize(stream_), "hipStreamSynchronize");
     }
 
   private:
@@ -417,6 +425,8 @@ namespace parafaft
     int r2c_length_ = 0; ///< R2C transform length (stored for potential use)
     int r2c_batch_ = 0;  ///< R2C batch size (stored for potential use)
     int r2c_dist_ = 0;   ///< R2C distance between batches (stored for potential use)
+
+    hipStream_t stream_ = nullptr; ///< HIP stream for async FFT and memcpy ops
 
     /**
      * @brief Check hipFFT result and throw on error.
