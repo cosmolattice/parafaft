@@ -313,7 +313,6 @@ public:
     // Stages 1 to D-1: MPI redistribute + C2C FFT
     for (int stage = 1; stage < D; ++stage) {
       int axis = D - 1 - stage;
-      int prev_axis = axis + 1;
 
       // MPI exchange: src → dst
       int trans = stage - 1; // transition index
@@ -323,11 +322,11 @@ public:
                  fwd_recv_types_[trans].data(), exchange_counts_.data(),
                  exchange_displs_.data());
       } else {
-        exchange_packed<Backend>(
-            subcomms_[axis], nparts_[trans], D,
-            src, stage_output_shapes_[trans].data(), D - 1 - trans,
-            dst, stage_shapes_[trans + 1].data(), D - 2 - trans,
-            pack_buffer_.data());
+        exchange_packed<Backend>(subcomms_[axis], nparts_[trans], D, src,
+                                 stage_output_shapes_[trans].data(),
+                                 D - 1 - trans, dst,
+                                 stage_shapes_[trans + 1].data(), D - 2 - trans,
+                                 pack_buffer_.data());
       }
 
       // C2C FFT in-place on dst
@@ -416,7 +415,6 @@ public:
       perform_fft_on_buffer(stage, axis, FFTDirection::Backward, src);
 
       // MPI exchange: src → dst (backward uses swapped send/recv)
-      int prev_axis = axis + 1;
       int trans = stage - 1; // transition index
       if constexpr (Backend::use_alltoallw) {
         exchange(subcomms_[axis], nparts_[trans], src,
@@ -424,11 +422,10 @@ public:
                  fwd_send_types_[trans].data(), exchange_counts_.data(),
                  exchange_displs_.data());
       } else {
-        exchange_packed<Backend>(
-            subcomms_[axis], nparts_[trans], D,
-            src, stage_shapes_[trans + 1].data(), D - 2 - trans,
-            dst, stage_output_shapes_[trans].data(), D - 1 - trans,
-            pack_buffer_.data());
+        exchange_packed<Backend>(subcomms_[axis], nparts_[trans], D, src,
+                                 stage_shapes_[trans + 1].data(), D - 2 - trans,
+                                 dst, stage_output_shapes_[trans].data(),
+                                 D - 1 - trans, pack_buffer_.data());
       }
 
       // Swap for next iteration
@@ -703,7 +700,8 @@ private:
       exchange_displs_.assign(max_nparts, 0);
 
       for (int t = 0; t < D - 1; ++t) {
-        int send_axis = D - 1 - t; // axis distributed in stage_output_shapes_[t]
+        int send_axis =
+            D - 1 - t; // axis distributed in stage_output_shapes_[t]
         int recv_axis = D - 2 - t; // axis distributed in stage_shapes_[t+1]
 
         fwd_send_types_[t].resize(nparts_[t]);
@@ -934,8 +932,9 @@ private:
   /// Pre-allocated displacements array for MPI_Alltoallw (all 0s)
   std::vector<int> exchange_displs_;
 
-  ComplexBuffer scratch_b_; ///< Ping-pong buffer for intermediate stages
-  ComplexBuffer pack_buffer_; ///< Pack buffer for contiguous MPI exchange (GPU backends only)
+  ComplexBuffer scratch_b_;   ///< Ping-pong buffer for intermediate stages
+  ComplexBuffer pack_buffer_; ///< Pack buffer for contiguous MPI exchange (GPU
+                              ///< backends only)
 
   Backend backend_; ///< FFT backend (FFTW, cuFFT, etc.)
 };

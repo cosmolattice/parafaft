@@ -225,12 +225,28 @@ inline void exchange_packed(
     recv_offset += count;
   }
 
-  // MPI_Alltoallv with contiguous buffers (GPU-direct capable)
-  // Receive into src_array (reuse: its old data was already packed out)
-  MPI_Alltoallv(pack_buf, send_counts.data(), send_displs.data(),
-                MPI_C_DOUBLE_COMPLEX,
-                src_array, recv_counts.data(), recv_displs.data(),
-                MPI_C_DOUBLE_COMPLEX, comm);
+  // Pairwise send/recv with contiguous buffers.
+  // We use MPI_Sendrecv (point-to-point) instead of MPI_Alltoallv because
+  // collective accelerators (e.g. HCOLL) may not support GPU device pointers
+  // even when the underlying P2P transport (UCX) does.
+  // Receive into src_array (reuse: its old data was already packed out).
+  int myrank;
+  MPI_Comm_rank(comm, &myrank);
+  for (int p = 0; p < nparts; ++p) {
+    if (p == myrank) {
+      BackendT::memcpy(
+          reinterpret_cast<char *>(src_array) + static_cast<size_t>(recv_displs[p]) * elem_size,
+          reinterpret_cast<char *>(pack_buf) + static_cast<size_t>(send_displs[p]) * elem_size,
+          static_cast<size_t>(send_counts[p]) * elem_size);
+    } else {
+      MPI_Sendrecv(
+          reinterpret_cast<char *>(pack_buf) + static_cast<size_t>(send_displs[p]) * elem_size,
+          send_counts[p], MPI_C_DOUBLE_COMPLEX, p, 0,
+          reinterpret_cast<char *>(src_array) + static_cast<size_t>(recv_displs[p]) * elem_size,
+          recv_counts[p], MPI_C_DOUBLE_COMPLEX, p, 0,
+          comm, MPI_STATUS_IGNORE);
+    }
+  }
 
   // Unpack from src_array (contiguous received data) into dst_array
   for (int p = 0; p < nparts; ++p) {
