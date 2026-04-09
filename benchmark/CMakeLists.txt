@@ -54,4 +54,18 @@ elseif(PARAFAFT_FFTW_THREADING STREQUAL "OpenMP")
   endif()
 endif()
 
+if(PARAFAFT_CUDA)
+  add_executable(bench_c2c_cuda bench_c2c.cu)
+  target_link_libraries(bench_c2c_cuda PRIVATE parafaft::parafaft MPI::MPI_CXX)
+  set_target_properties(bench_c2c_cuda PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bench"
+    CUDA_SEPARABLE_COMPILATION ON)
+
+  add_executable(bench_r2c_cuda bench_r2c.cu)
+  target_link_libraries(bench_r2c_cuda PRIVATE parafaft::parafaft MPI::MPI_CXX)
+  set_target_properties(bench_r2c_cuda PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bench"
+    CUDA_SEPARABLE_COMPILATION ON)
+endif()
+
 file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/bench)
