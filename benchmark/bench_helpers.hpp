@@ -38,18 +38,19 @@ template <int D>
 void iterate_nd(
     const int shape[D],
     const std::function<void(const std::array<int, D> &)> &callback) {
-  std::array<int, D> idx{};
   int total = 1;
   for (int d = 0; d < D; ++d)
     total *= shape[d];
 
+#pragma omp parallel for schedule(static)
   for (int i = 0; i < total; ++i) {
-    callback(idx);
+    std::array<int, D> idx;
+    int rem = i;
     for (int d = D - 1; d >= 0; --d) {
-      if (++idx[d] < shape[d])
-        break;
-      idx[d] = 0;
+      idx[d] = rem % shape[d];
+      rem /= shape[d];
     }
+    callback(idx);
   }
 }
 
@@ -160,6 +161,7 @@ template <int D> struct FFTWMPIReferenceCtoC {
     for (int d = 1; d < D; ++d)
       stride *= N;
 
+#pragma omp parallel for schedule(static)
     for (ptrdiff_t i = 0; i < local_n0_; ++i) {
       ptrdiff_t gi = local_0_start_ + i;
       for (ptrdiff_t j = 0; j < stride; ++j) {
@@ -249,10 +251,12 @@ template <int D> struct FFTWMPIReferenceRtoC {
 
     // Zero the entire buffer (including padding)
     ptrdiff_t total_doubles = local_n0_ * inner_stride * padded_last;
+#pragma omp parallel for schedule(static)
     for (ptrdiff_t i = 0; i < total_doubles; ++i)
       buffer_[i] = 0.0;
 
     // Fill real values
+#pragma omp parallel for schedule(static)
     for (ptrdiff_t i = 0; i < local_n0_; ++i) {
       ptrdiff_t gi = local_0_start_ + i;
       for (ptrdiff_t j = 0; j < inner_stride; ++j) {

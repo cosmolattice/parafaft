@@ -177,15 +177,15 @@ inline void exchange_packed(
     typename BackendT::Complex *pack_buf)
 {
   using Complex = typename BackendT::Complex;
-  int elem_size = sizeof(Complex);
+  size_t elem_size = sizeof(Complex);
 
   // Compute send-side geometry
-  int src_leading = 1, src_trailing = 1;
+  size_t src_leading = 1, src_trailing = 1;
   for (int i = 0; i < src_axis; ++i) src_leading *= src_sizes[i];
   for (int i = src_axis + 1; i < ndims; ++i) src_trailing *= src_sizes[i];
 
   // Compute recv-side geometry
-  int dst_leading = 1, dst_trailing = 1;
+  size_t dst_leading = 1, dst_trailing = 1;
   for (int i = 0; i < dst_axis; ++i) dst_leading *= dst_sizes[i];
   for (int i = dst_axis + 1; i < ndims; ++i) dst_trailing *= dst_sizes[i];
 
@@ -193,35 +193,36 @@ inline void exchange_packed(
   std::vector<int> recv_counts(nparts), recv_displs(nparts);
 
   // Pack each partition into contiguous pack_buf
-  int send_offset = 0;
+  size_t send_offset = 0;
   for (int p = 0; p < nparts; ++p) {
     int n, s;
     decompose(src_sizes[src_axis], nparts, p, n, s);
     int count = src_leading * n * src_trailing;
     send_counts[p] = count;
-    send_displs[p] = send_offset;
+    send_displs[p] = static_cast<int>(send_offset);
 
     // Strided copy: src_leading rows, each n*src_trailing elements wide,
     // with source stride src_sizes[src_axis]*src_trailing between rows
+    size_t row_bytes = static_cast<size_t>(n) * src_trailing * elem_size;
     BackendT::memcpy2d(
         reinterpret_cast<char *>(pack_buf) + send_offset * elem_size,
-        static_cast<size_t>(n) * src_trailing * elem_size,
+        row_bytes,
         reinterpret_cast<char *>(src_array) + static_cast<size_t>(s) * src_trailing * elem_size,
         static_cast<size_t>(src_sizes[src_axis]) * src_trailing * elem_size,
-        static_cast<size_t>(n) * src_trailing * elem_size,
+        row_bytes,
         src_leading);
 
     send_offset += count;
   }
 
   // Compute recv counts/displacements
-  int recv_offset = 0;
+  size_t recv_offset = 0;
   for (int p = 0; p < nparts; ++p) {
     int n, s;
     decompose(dst_sizes[dst_axis], nparts, p, n, s);
     int count = dst_leading * n * dst_trailing;
     recv_counts[p] = count;
-    recv_displs[p] = recv_offset;
+    recv_displs[p] = static_cast<int>(recv_offset);
     recv_offset += count;
   }
 
@@ -233,16 +234,18 @@ inline void exchange_packed(
   int myrank;
   MPI_Comm_rank(comm, &myrank);
   for (int p = 0; p < nparts; ++p) {
+    size_t send_byte_off = static_cast<size_t>(send_displs[p]) * elem_size;
+    size_t recv_byte_off = static_cast<size_t>(recv_displs[p]) * elem_size;
     if (p == myrank) {
       BackendT::memcpy(
-          reinterpret_cast<char *>(src_array) + static_cast<size_t>(recv_displs[p]) * elem_size,
-          reinterpret_cast<char *>(pack_buf) + static_cast<size_t>(send_displs[p]) * elem_size,
+          reinterpret_cast<char *>(src_array) + recv_byte_off,
+          reinterpret_cast<char *>(pack_buf) + send_byte_off,
           static_cast<size_t>(send_counts[p]) * elem_size);
     } else {
       MPI_Sendrecv(
-          reinterpret_cast<char *>(pack_buf) + static_cast<size_t>(send_displs[p]) * elem_size,
+          reinterpret_cast<char *>(pack_buf) + send_byte_off,
           send_counts[p], MPI_C_DOUBLE_COMPLEX, p, 0,
-          reinterpret_cast<char *>(src_array) + static_cast<size_t>(recv_displs[p]) * elem_size,
+          reinterpret_cast<char *>(src_array) + recv_byte_off,
           recv_counts[p], MPI_C_DOUBLE_COMPLEX, p, 0,
           comm, MPI_STATUS_IGNORE);
     }
@@ -253,12 +256,13 @@ inline void exchange_packed(
     int n, s;
     decompose(dst_sizes[dst_axis], nparts, p, n, s);
 
+    size_t row_bytes = static_cast<size_t>(n) * dst_trailing * elem_size;
     BackendT::memcpy2d(
         reinterpret_cast<char *>(dst_array) + static_cast<size_t>(s) * dst_trailing * elem_size,
         static_cast<size_t>(dst_sizes[dst_axis]) * dst_trailing * elem_size,
         reinterpret_cast<char *>(src_array) + static_cast<size_t>(recv_displs[p]) * elem_size,
-        static_cast<size_t>(n) * dst_trailing * elem_size,
-        static_cast<size_t>(n) * dst_trailing * elem_size,
+        row_bytes,
+        row_bytes,
         dst_leading);
   }
 }
