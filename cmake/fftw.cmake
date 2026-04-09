@@ -1,5 +1,5 @@
-find_path(FFTW_INCLUDES fftw3.h HINTS ${FFTW_DIR}/include)
-mark_as_advanced(FFTW_INCLUDES)
+find_path(FFTW3_INCLUDES fftw3.h HINTS ${FFTW_DIR}/include)
+mark_as_advanced(FFTW3_INCLUDES)
 
 # Find the FFTW libraries
 find_library(FFTW3_LIB fftw3 HINTS ${FFTW_DIR}/lib)
