@@ -189,29 +189,23 @@ inline void exchange_packed(
   for (int i = 0; i < dst_axis; ++i) dst_leading *= dst_sizes[i];
   for (int i = dst_axis + 1; i < ndims; ++i) dst_trailing *= dst_sizes[i];
 
+  // When leading == 1, the partition axis is the slowest-varying and each
+  // partition is already a single contiguous block in memory — identical to
+  // the packed layout. We can skip the pack or unpack step entirely.
+  bool src_contiguous = (src_leading == 1);
+  bool dst_contiguous = (dst_leading == 1);
+
   std::vector<int> send_counts(nparts), send_displs(nparts);
   std::vector<int> recv_counts(nparts), recv_displs(nparts);
 
-  // Pack each partition into contiguous pack_buf
+  // Compute send counts/displacements
   size_t send_offset = 0;
   for (int p = 0; p < nparts; ++p) {
     int n, s;
     decompose(src_sizes[src_axis], nparts, p, n, s);
-    int count = src_leading * n * src_trailing;
-    send_counts[p] = count;
+    size_t count = src_leading * n * src_trailing;
+    send_counts[p] = static_cast<int>(count);
     send_displs[p] = static_cast<int>(send_offset);
-
-    // Strided copy: src_leading rows, each n*src_trailing elements wide,
-    // with source stride src_sizes[src_axis]*src_trailing between rows
-    size_t row_bytes = static_cast<size_t>(n) * src_trailing * elem_size;
-    BackendT::memcpy2d(
-        reinterpret_cast<char *>(pack_buf) + send_offset * elem_size,
-        row_bytes,
-        reinterpret_cast<char *>(src_array) + static_cast<size_t>(s) * src_trailing * elem_size,
-        static_cast<size_t>(src_sizes[src_axis]) * src_trailing * elem_size,
-        row_bytes,
-        src_leading);
-
     send_offset += count;
   }
 
@@ -220,17 +214,47 @@ inline void exchange_packed(
   for (int p = 0; p < nparts; ++p) {
     int n, s;
     decompose(dst_sizes[dst_axis], nparts, p, n, s);
-    int count = dst_leading * n * dst_trailing;
-    recv_counts[p] = count;
+    size_t count = dst_leading * n * dst_trailing;
+    recv_counts[p] = static_cast<int>(count);
     recv_displs[p] = static_cast<int>(recv_offset);
     recv_offset += count;
+  }
+
+  // Pack src_array into pack_buf (skip when src is already contiguous)
+  if (!src_contiguous) {
+    for (int p = 0; p < nparts; ++p) {
+      int n, s;
+      decompose(src_sizes[src_axis], nparts, p, n, s);
+      size_t row_bytes = static_cast<size_t>(n) * src_trailing * elem_size;
+      BackendT::memcpy2d(
+          reinterpret_cast<char *>(pack_buf) + static_cast<size_t>(send_displs[p]) * elem_size,
+          row_bytes,
+          reinterpret_cast<char *>(src_array) + static_cast<size_t>(s) * src_trailing * elem_size,
+          static_cast<size_t>(src_sizes[src_axis]) * src_trailing * elem_size,
+          row_bytes,
+          src_leading);
+    }
+  }
+
+  // Choose send/recv buffer pointers:
+  //   send_from: pack_buf if we packed, src_array if src is contiguous
+  //   recv_into: dst_array if dst is contiguous, pack_buf if src was
+  //              contiguous (pack_buf is free), src_array otherwise
+  //              (src_array is free after packing)
+  Complex *send_from = src_contiguous ? src_array : pack_buf;
+  Complex *recv_into;
+  if (dst_contiguous) {
+    recv_into = dst_array;
+  } else if (src_contiguous) {
+    recv_into = pack_buf; // pack_buf unused since we skipped packing
+  } else {
+    recv_into = src_array; // src_array free since we packed its data out
   }
 
   // Pairwise send/recv with contiguous buffers.
   // We use MPI_Sendrecv (point-to-point) instead of MPI_Alltoallv because
   // collective accelerators (e.g. HCOLL) may not support GPU device pointers
   // even when the underlying P2P transport (UCX) does.
-  // Receive into src_array (reuse: its old data was already packed out).
   int myrank;
   MPI_Comm_rank(comm, &myrank);
   for (int p = 0; p < nparts; ++p) {
@@ -238,32 +262,33 @@ inline void exchange_packed(
     size_t recv_byte_off = static_cast<size_t>(recv_displs[p]) * elem_size;
     if (p == myrank) {
       BackendT::memcpy(
-          reinterpret_cast<char *>(src_array) + recv_byte_off,
-          reinterpret_cast<char *>(pack_buf) + send_byte_off,
+          reinterpret_cast<char *>(recv_into) + recv_byte_off,
+          reinterpret_cast<char *>(send_from) + send_byte_off,
           static_cast<size_t>(send_counts[p]) * elem_size);
     } else {
       MPI_Sendrecv(
-          reinterpret_cast<char *>(pack_buf) + send_byte_off,
+          reinterpret_cast<char *>(send_from) + send_byte_off,
           send_counts[p], MPI_C_DOUBLE_COMPLEX, p, 0,
-          reinterpret_cast<char *>(src_array) + recv_byte_off,
+          reinterpret_cast<char *>(recv_into) + recv_byte_off,
           recv_counts[p], MPI_C_DOUBLE_COMPLEX, p, 0,
           comm, MPI_STATUS_IGNORE);
     }
   }
 
-  // Unpack from src_array (contiguous received data) into dst_array
-  for (int p = 0; p < nparts; ++p) {
-    int n, s;
-    decompose(dst_sizes[dst_axis], nparts, p, n, s);
-
-    size_t row_bytes = static_cast<size_t>(n) * dst_trailing * elem_size;
-    BackendT::memcpy2d(
-        reinterpret_cast<char *>(dst_array) + static_cast<size_t>(s) * dst_trailing * elem_size,
-        static_cast<size_t>(dst_sizes[dst_axis]) * dst_trailing * elem_size,
-        reinterpret_cast<char *>(src_array) + static_cast<size_t>(recv_displs[p]) * elem_size,
-        row_bytes,
-        row_bytes,
-        dst_leading);
+  // Unpack recv_into into dst_array (skip when dst is already contiguous)
+  if (!dst_contiguous) {
+    for (int p = 0; p < nparts; ++p) {
+      int n, s;
+      decompose(dst_sizes[dst_axis], nparts, p, n, s);
+      size_t row_bytes = static_cast<size_t>(n) * dst_trailing * elem_size;
+      BackendT::memcpy2d(
+          reinterpret_cast<char *>(dst_array) + static_cast<size_t>(s) * dst_trailing * elem_size,
+          static_cast<size_t>(dst_sizes[dst_axis]) * dst_trailing * elem_size,
+          reinterpret_cast<char *>(recv_into) + static_cast<size_t>(recv_displs[p]) * elem_size,
+          row_bytes,
+          row_bytes,
+          dst_leading);
+    }
   }
 }
 
