@@ -17,8 +17,9 @@
 
 #include <fftw3.h>
 #include <complex>
-#include <vector>
 #include <cstring>
+#include <new>
+#include <vector>
 #include <thread>
 #include <cstdlib>
 #include <mpi.h>
@@ -52,8 +53,98 @@ namespace parafaft
   {
   public:
     using Complex = std::complex<double>;       ///< Complex number type (CPU-compatible)
-    using Buffer = std::vector<double>;         ///< Real buffer type (host memory)
-    using ComplexBuffer = std::vector<Complex>; ///< Complex buffer type (host memory)
+
+    /**
+     * @brief FFTW-aligned real buffer using fftw_alloc_real / fftw_free.
+     *
+     * Provides 16/32/64-byte alignment required for FFTW's SIMD codepaths
+     * (SSE2, AVX, AVX-512). std::vector's default allocator only guarantees
+     * alignof(max_align_t) which may be insufficient.
+     */
+    class AlignedBuffer {
+      double *data_ = nullptr;
+      size_t size_ = 0;
+    public:
+      AlignedBuffer() = default;
+      explicit AlignedBuffer(size_t n) : data_(fftw_alloc_real(n)), size_(n) {
+        if (n > 0 && !data_) throw std::bad_alloc();
+      }
+      ~AlignedBuffer() { if (data_) fftw_free(data_); }
+      AlignedBuffer(const AlignedBuffer &) = delete;
+      AlignedBuffer &operator=(const AlignedBuffer &) = delete;
+      AlignedBuffer(AlignedBuffer &&other) noexcept
+          : data_(other.data_), size_(other.size_) {
+        other.data_ = nullptr;
+        other.size_ = 0;
+      }
+      AlignedBuffer &operator=(AlignedBuffer &&other) noexcept {
+        if (this != &other) {
+          if (data_) fftw_free(data_);
+          data_ = other.data_;
+          size_ = other.size_;
+          other.data_ = nullptr;
+          other.size_ = 0;
+        }
+        return *this;
+      }
+      void resize(size_t n) {
+        if (data_) fftw_free(data_);
+        data_ = (n > 0) ? fftw_alloc_real(n) : nullptr;
+        size_ = n;
+        if (n > 0 && !data_) throw std::bad_alloc();
+      }
+      double *data() { return data_; }
+      const double *data() const { return data_; }
+      size_t size() const { return size_; }
+    };
+
+    /**
+     * @brief FFTW-aligned complex buffer using fftw_alloc_complex / fftw_free.
+     *
+     * Provides 16/32/64-byte alignment required for FFTW's SIMD codepaths.
+     * FFTW's new-array execute API (fftw_execute_dft) requires the runtime
+     * buffer to have the same alignment as the planning buffer — using this
+     * class for both ensures FFTW can select optimal SIMD plans.
+     */
+    class AlignedComplexBuffer {
+      fftw_complex *data_ = nullptr;
+      size_t size_ = 0;
+    public:
+      AlignedComplexBuffer() = default;
+      explicit AlignedComplexBuffer(size_t n) : data_(fftw_alloc_complex(n)), size_(n) {
+        if (n > 0 && !data_) throw std::bad_alloc();
+      }
+      ~AlignedComplexBuffer() { if (data_) fftw_free(data_); }
+      AlignedComplexBuffer(const AlignedComplexBuffer &) = delete;
+      AlignedComplexBuffer &operator=(const AlignedComplexBuffer &) = delete;
+      AlignedComplexBuffer(AlignedComplexBuffer &&other) noexcept
+          : data_(other.data_), size_(other.size_) {
+        other.data_ = nullptr;
+        other.size_ = 0;
+      }
+      AlignedComplexBuffer &operator=(AlignedComplexBuffer &&other) noexcept {
+        if (this != &other) {
+          if (data_) fftw_free(data_);
+          data_ = other.data_;
+          size_ = other.size_;
+          other.data_ = nullptr;
+          other.size_ = 0;
+        }
+        return *this;
+      }
+      void resize(size_t n) {
+        if (data_) fftw_free(data_);
+        data_ = (n > 0) ? fftw_alloc_complex(n) : nullptr;
+        size_ = n;
+        if (n > 0 && !data_) throw std::bad_alloc();
+      }
+      Complex *data() { return reinterpret_cast<Complex *>(data_); }
+      const Complex *data() const { return reinterpret_cast<const Complex *>(data_); }
+      size_t size() const { return size_; }
+    };
+
+    using Buffer = AlignedBuffer;               ///< Real buffer type (FFTW-aligned)
+    using ComplexBuffer = AlignedComplexBuffer;  ///< Complex buffer type (FFTW-aligned)
 
     /**
      * @brief Construct an FFTW backend with storage for the given number of stages.

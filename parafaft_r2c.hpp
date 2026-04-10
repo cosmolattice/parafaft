@@ -334,19 +334,15 @@ public:
                  fwd_recv_types_[trans].data(), exchange_counts_.data(),
                  exchange_displs_.data());
       } else if (p2p_info_[trans].any_enabled) {
-        exchange_hybrid<Backend>(backend_, subcomms_[axis], nparts_[trans], D,
-                                 src, stage_output_shapes_[trans].data(),
-                                 D - 1 - trans, dst,
-                                 stage_shapes_[trans + 1].data(), D - 2 - trans,
-                                 pack_buffer_.data(),
+        exchange_hybrid<Backend>(backend_, subcomms_[axis], nparts_[trans],
+                                 src, dst, pack_buffer_.data(),
                                  p2p_info_[trans].remote_pack_ptrs.data(),
-                                 p2p_info_[trans].peer_enabled.data());
+                                 p2p_info_[trans].peer_enabled.data(),
+                                 fwd_exchange_geom_[trans]);
       } else {
-        exchange_packed<Backend>(backend_, subcomms_[axis], nparts_[trans], D,
-                                 src, stage_output_shapes_[trans].data(),
-                                 D - 1 - trans, dst,
-                                 stage_shapes_[trans + 1].data(), D - 2 - trans,
-                                 pack_buffer_.data());
+        exchange_packed<Backend>(backend_, subcomms_[axis], nparts_[trans],
+                                 src, dst, pack_buffer_.data(),
+                                 fwd_exchange_geom_[trans]);
       }
 
       // C2C FFT in-place on dst
@@ -444,19 +440,15 @@ public:
                  fwd_send_types_[trans].data(), exchange_counts_.data(),
                  exchange_displs_.data());
       } else if (p2p_info_[trans].any_enabled) {
-        exchange_hybrid<Backend>(backend_, subcomms_[axis], nparts_[trans], D,
-                                 src, stage_shapes_[trans + 1].data(),
-                                 D - 2 - trans, dst,
-                                 stage_output_shapes_[trans].data(),
-                                 D - 1 - trans, pack_buffer_.data(),
+        exchange_hybrid<Backend>(backend_, subcomms_[axis], nparts_[trans],
+                                 src, dst, pack_buffer_.data(),
                                  p2p_info_[trans].remote_pack_ptrs.data(),
-                                 p2p_info_[trans].peer_enabled.data());
+                                 p2p_info_[trans].peer_enabled.data(),
+                                 bwd_exchange_geom_[trans]);
       } else {
-        exchange_packed<Backend>(backend_, subcomms_[axis], nparts_[trans], D,
-                                 src, stage_shapes_[trans + 1].data(),
-                                 D - 2 - trans, dst,
-                                 stage_output_shapes_[trans].data(),
-                                 D - 1 - trans, pack_buffer_.data());
+        exchange_packed<Backend>(backend_, subcomms_[axis], nparts_[trans],
+                                 src, dst, pack_buffer_.data(),
+                                 bwd_exchange_geom_[trans]);
       }
 
       // Swap for next iteration
@@ -666,11 +658,10 @@ private:
       batch *= stage_shapes_[0][i];
     }
 
-    // Copy each row, leaving padding uninitialized
-    for (int b = 0; b < batch; ++b) {
-      backend_.memcpy(padded_output + b * padded_stride,
-                      real_input + b * last_dim, last_dim * sizeof(double));
-    }
+    // Single 2D copy: contiguous real rows → padded rows
+    backend_.memcpy2d(padded_output, padded_stride * sizeof(double),
+                      real_input, last_dim * sizeof(double),
+                      last_dim * sizeof(double), batch);
   }
 
   /**
@@ -694,12 +685,10 @@ private:
       batch *= stage_shapes_[0][i];
     }
 
-    // Copy each row, skipping padding
-    for (int b = 0; b < batch; ++b) {
-      backend_.memcpy(real_output + b * last_dim,
-                      padded_input + b * padded_stride,
-                      last_dim * sizeof(double));
-    }
+    // Single 2D copy: padded rows → contiguous real rows
+    backend_.memcpy2d(real_output, last_dim * sizeof(double),
+                      padded_input, padded_stride * sizeof(double),
+                      last_dim * sizeof(double), batch);
   }
 
   /**
@@ -743,6 +732,24 @@ private:
                  send_axis, nparts_[t], fwd_send_types_[t].data());
         subarray(MPI_C_DOUBLE_COMPLEX, D, stage_shapes_[t + 1].data(),
                  recv_axis, nparts_[t], fwd_recv_types_[t].data());
+      }
+    }
+
+    // Pre-compute exchange geometry for packed/hybrid paths (GPU backends)
+    if constexpr (!Backend::use_alltoallw) {
+      fwd_exchange_geom_.resize(D - 1);
+      bwd_exchange_geom_.resize(D - 1);
+      for (int t = 0; t < D - 1; ++t) {
+        int send_axis = D - 1 - t;
+        int recv_axis = D - 2 - t;
+        // R2C forward: src = stage_output_shapes_[t], dst = stage_shapes_[t+1]
+        init_exchange_geometry(fwd_exchange_geom_[t], nparts_[t], D,
+                               stage_output_shapes_[t].data(), send_axis,
+                               stage_shapes_[t + 1].data(), recv_axis);
+        // Backward is forward with src/dst swapped
+        init_exchange_geometry(bwd_exchange_geom_[t], nparts_[t], D,
+                               stage_shapes_[t + 1].data(), recv_axis,
+                               stage_output_shapes_[t].data(), send_axis);
       }
     }
   }
@@ -1039,6 +1046,10 @@ private:
   ComplexBuffer scratch_b_;   ///< Ping-pong buffer for intermediate stages
   ComplexBuffer pack_buffer_; ///< Pack buffer for contiguous MPI exchange (GPU
                               ///< backends only)
+
+  /// Pre-computed exchange geometry for packed/hybrid paths (GPU backends)
+  std::vector<ExchangeGeometry> fwd_exchange_geom_;
+  std::vector<ExchangeGeometry> bwd_exchange_geom_;
 
   /// Per-subcommunicator P2P exchange info (GPU backends only)
   struct P2PInfo {

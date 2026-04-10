@@ -104,6 +104,102 @@ inline void subarray(MPI_Datatype datatype, int ndims, const int sizes[],
   }
 }
 
+// ============================================================================
+// Pre-computed Exchange Geometry
+// ============================================================================
+
+/**
+ * @brief Pre-computed geometry for MPI exchange operations.
+ *
+ * Caches all decomposition results, counts, displacements, and layout
+ * metadata for a single stage transition. Populated once at construction
+ * time and reused on every forward/backward call, eliminating per-call
+ * heap allocations and redundant decompose() arithmetic.
+ */
+struct ExchangeGeometry {
+  std::vector<int> send_counts;  ///< Per-peer send element counts
+  std::vector<int> send_displs;  ///< Per-peer send element displacements
+  std::vector<int> recv_counts;  ///< Per-peer recv element counts
+  std::vector<int> recv_displs;  ///< Per-peer recv element displacements
+  std::vector<int> src_n;        ///< Per-peer: decompose n for src axis
+  std::vector<int> src_s;        ///< Per-peer: decompose s (start) for src axis
+  std::vector<int> dst_n;        ///< Per-peer: decompose n for dst axis
+  std::vector<int> dst_s;        ///< Per-peer: decompose s (start) for dst axis
+  size_t src_leading;            ///< Product of dims before src axis
+  size_t src_trailing;           ///< Product of dims after src axis
+  size_t dst_leading;            ///< Product of dims before dst axis
+  size_t dst_trailing;           ///< Product of dims after dst axis
+  int src_axis_extent;           ///< Full extent of src partition axis
+  int dst_axis_extent;           ///< Full extent of dst partition axis
+  bool src_contiguous;           ///< True when src_leading == 1 (no pack needed)
+  bool dst_contiguous;           ///< True when dst_leading == 1 (no unpack needed)
+  mutable std::vector<MPI_Request> requests;  ///< Pre-allocated MPI request buffer
+};
+
+/**
+ * @brief Initialize exchange geometry for a single stage transition.
+ *
+ * Pre-computes all per-peer decomposition results, counts, displacements,
+ * and layout metadata. Called once per transition at construction time.
+ *
+ * @param geom Geometry struct to populate
+ * @param nparts Number of partitions (peers in subcommunicator)
+ * @param ndims Number of array dimensions
+ * @param src_sizes Source array dimensions
+ * @param src_axis Axis partitioned in source layout
+ * @param dst_sizes Destination array dimensions
+ * @param dst_axis Axis partitioned in destination layout
+ */
+inline void init_exchange_geometry(
+    ExchangeGeometry &geom, int nparts, int ndims,
+    const int src_sizes[], int src_axis,
+    const int dst_sizes[], int dst_axis)
+{
+  geom.src_leading = 1;
+  geom.src_trailing = 1;
+  for (int i = 0; i < src_axis; ++i) geom.src_leading *= src_sizes[i];
+  for (int i = src_axis + 1; i < ndims; ++i) geom.src_trailing *= src_sizes[i];
+
+  geom.dst_leading = 1;
+  geom.dst_trailing = 1;
+  for (int i = 0; i < dst_axis; ++i) geom.dst_leading *= dst_sizes[i];
+  for (int i = dst_axis + 1; i < ndims; ++i) geom.dst_trailing *= dst_sizes[i];
+
+  geom.src_contiguous = (geom.src_leading == 1);
+  geom.dst_contiguous = (geom.dst_leading == 1);
+  geom.src_axis_extent = src_sizes[src_axis];
+  geom.dst_axis_extent = dst_sizes[dst_axis];
+
+  geom.src_n.resize(nparts);
+  geom.src_s.resize(nparts);
+  geom.dst_n.resize(nparts);
+  geom.dst_s.resize(nparts);
+  geom.send_counts.resize(nparts);
+  geom.send_displs.resize(nparts);
+  geom.recv_counts.resize(nparts);
+  geom.recv_displs.resize(nparts);
+
+  size_t send_offset = 0;
+  for (int p = 0; p < nparts; ++p) {
+    decompose(src_sizes[src_axis], nparts, p, geom.src_n[p], geom.src_s[p]);
+    size_t count = geom.src_leading * geom.src_n[p] * geom.src_trailing;
+    geom.send_counts[p] = static_cast<int>(count);
+    geom.send_displs[p] = static_cast<int>(send_offset);
+    send_offset += count;
+  }
+
+  size_t recv_offset = 0;
+  for (int p = 0; p < nparts; ++p) {
+    decompose(dst_sizes[dst_axis], nparts, p, geom.dst_n[p], geom.dst_s[p]);
+    size_t count = geom.dst_leading * geom.dst_n[p] * geom.dst_trailing;
+    geom.recv_counts[p] = static_cast<int>(count);
+    geom.recv_displs[p] = static_cast<int>(recv_offset);
+    recv_offset += count;
+  }
+
+  geom.requests.reserve(2 * (nparts > 0 ? nparts - 1 : 0));
+}
+
 /**
  * @brief Global data redistribution using MPI_Alltoallw with pre-cached
  * datatypes.
@@ -138,98 +234,49 @@ inline void exchange(MPI_Comm comm, int nparts, void *arrayA,
 }
 
 /**
- * @brief Packed exchange: manual pack → MPI_Alltoallv → unpack.
+ * @brief Packed exchange using pre-computed geometry.
  *
  * Replaces MPI_Alltoallw with derived subarray types by explicitly packing
- * non-contiguous data into contiguous GPU buffers, using MPI_Alltoallv
+ * non-contiguous data into contiguous GPU buffers, using MPI point-to-point
  * (which supports GPU-direct for contiguous data), then unpacking.
  *
- * This avoids the slow host-staging fallback that most GPU-aware MPI
- * implementations use for non-contiguous derived datatypes on device memory.
- *
- * Memory optimization: MPI receives into src_array (whose original data was
- * already packed out), so only one extra buffer (pack_buf) is needed.
+ * Uses pre-computed ExchangeGeometry to avoid per-call heap allocations
+ * and redundant decompose() calls.
  *
  * @tparam BackendT FFT backend type (must provide memcpy2d)
+ * @param backend Backend instance for async memcpy
  * @param comm MPI subcommunicator for the redistribution
  * @param nparts Number of partitions in the subcommunicator
- * @param ndims Number of array dimensions
- * @param src_array Source array (data to send, will be overwritten with
- *                  received packed data as temporary storage)
- * @param src_sizes Full array dimensions at the source stage
- * @param src_axis Axis along which source data is partitioned for sending
- * @param dst_array Destination array (will contain unpacked received data)
- * @param dst_sizes Full array dimensions at the destination stage
- * @param dst_axis Axis along which destination data is partitioned for
- *                 receiving
+ * @param src_array Source array (data to send)
+ * @param dst_array Destination array (will contain received data)
  * @param pack_buf Temporary buffer for packing (size >= total elements)
+ * @param geom Pre-computed exchange geometry for this transition
  */
 template <typename BackendT>
 inline void exchange_packed(
     const BackendT &backend,
-    MPI_Comm comm, int nparts, int ndims,
-    typename BackendT::Complex *src_array, const int src_sizes[], int src_axis,
-    typename BackendT::Complex *dst_array, const int dst_sizes[], int dst_axis,
-    typename BackendT::Complex *pack_buf)
+    MPI_Comm comm, int nparts,
+    typename BackendT::Complex *src_array,
+    typename BackendT::Complex *dst_array,
+    typename BackendT::Complex *pack_buf,
+    ExchangeGeometry &geom)
 {
   using Complex = typename BackendT::Complex;
   size_t elem_size = sizeof(Complex);
 
-  // Compute send-side geometry
-  size_t src_leading = 1, src_trailing = 1;
-  for (int i = 0; i < src_axis; ++i) src_leading *= src_sizes[i];
-  for (int i = src_axis + 1; i < ndims; ++i) src_trailing *= src_sizes[i];
-
-  // Compute recv-side geometry
-  size_t dst_leading = 1, dst_trailing = 1;
-  for (int i = 0; i < dst_axis; ++i) dst_leading *= dst_sizes[i];
-  for (int i = dst_axis + 1; i < ndims; ++i) dst_trailing *= dst_sizes[i];
-
-  // When leading == 1, the partition axis is the slowest-varying and each
-  // partition is already a single contiguous block in memory — identical to
-  // the packed layout. We can skip the pack or unpack step entirely.
-  bool src_contiguous = (src_leading == 1);
-  bool dst_contiguous = (dst_leading == 1);
-
-  std::vector<int> send_counts(nparts), send_displs(nparts);
-  std::vector<int> recv_counts(nparts), recv_displs(nparts);
-
-  // Compute send counts/displacements
-  size_t send_offset = 0;
-  for (int p = 0; p < nparts; ++p) {
-    int n, s;
-    decompose(src_sizes[src_axis], nparts, p, n, s);
-    size_t count = src_leading * n * src_trailing;
-    send_counts[p] = static_cast<int>(count);
-    send_displs[p] = static_cast<int>(send_offset);
-    send_offset += count;
-  }
-
-  // Compute recv counts/displacements
-  size_t recv_offset = 0;
-  for (int p = 0; p < nparts; ++p) {
-    int n, s;
-    decompose(dst_sizes[dst_axis], nparts, p, n, s);
-    size_t count = dst_leading * n * dst_trailing;
-    recv_counts[p] = static_cast<int>(count);
-    recv_displs[p] = static_cast<int>(recv_offset);
-    recv_offset += count;
-  }
-
   // Pack src_array into pack_buf (skip when src is already contiguous)
   // Pack is async on the backend stream, ordered after any preceding FFT.
-  if (!src_contiguous) {
+  if (!geom.src_contiguous) {
+    size_t src_spitch = static_cast<size_t>(geom.src_axis_extent) * geom.src_trailing * elem_size;
     for (int p = 0; p < nparts; ++p) {
-      int n, s;
-      decompose(src_sizes[src_axis], nparts, p, n, s);
-      size_t row_bytes = static_cast<size_t>(n) * src_trailing * elem_size;
+      size_t row_bytes = static_cast<size_t>(geom.src_n[p]) * geom.src_trailing * elem_size;
       backend.memcpy2d(
-          reinterpret_cast<char *>(pack_buf) + static_cast<size_t>(send_displs[p]) * elem_size,
+          reinterpret_cast<char *>(pack_buf) + static_cast<size_t>(geom.send_displs[p]) * elem_size,
           row_bytes,
-          reinterpret_cast<char *>(src_array) + static_cast<size_t>(s) * src_trailing * elem_size,
-          static_cast<size_t>(src_sizes[src_axis]) * src_trailing * elem_size,
+          reinterpret_cast<char *>(src_array) + static_cast<size_t>(geom.src_s[p]) * geom.src_trailing * elem_size,
+          src_spitch,
           row_bytes,
-          src_leading);
+          geom.src_leading);
     }
   }
 
@@ -238,11 +285,11 @@ inline void exchange_packed(
   //   recv_into: dst_array if dst is contiguous, pack_buf if src was
   //              contiguous (pack_buf is free), src_array otherwise
   //              (src_array is free after packing)
-  Complex *send_from = src_contiguous ? src_array : pack_buf;
+  Complex *send_from = geom.src_contiguous ? src_array : pack_buf;
   Complex *recv_into;
-  if (dst_contiguous) {
+  if (geom.dst_contiguous) {
     recv_into = dst_array;
-  } else if (src_contiguous) {
+  } else if (geom.src_contiguous) {
     recv_into = pack_buf; // pack_buf unused since we skipped packing
   } else {
     recv_into = src_array; // src_array free since we packed its data out
@@ -257,149 +304,116 @@ inline void exchange_packed(
   // collective accelerators (e.g. HCOLL) may not support GPU device pointers.
   int myrank;
   MPI_Comm_rank(comm, &myrank);
-  std::vector<MPI_Request> requests;
-  requests.reserve(2 * (nparts - 1));
+  geom.requests.clear();
 
   for (int p = 0; p < nparts; ++p) {
     if (p == myrank) continue;
-    size_t recv_byte_off = static_cast<size_t>(recv_displs[p]) * elem_size;
+    size_t recv_byte_off = static_cast<size_t>(geom.recv_displs[p]) * elem_size;
     MPI_Request req;
     MPI_Irecv(reinterpret_cast<char *>(recv_into) + recv_byte_off,
-              recv_counts[p], MPI_C_DOUBLE_COMPLEX, p, 0, comm, &req);
-    requests.push_back(req);
+              geom.recv_counts[p], MPI_C_DOUBLE_COMPLEX, p, 0, comm, &req);
+    geom.requests.push_back(req);
   }
   for (int p = 0; p < nparts; ++p) {
     if (p == myrank) continue;
-    size_t send_byte_off = static_cast<size_t>(send_displs[p]) * elem_size;
+    size_t send_byte_off = static_cast<size_t>(geom.send_displs[p]) * elem_size;
     MPI_Request req;
     MPI_Isend(reinterpret_cast<char *>(send_from) + send_byte_off,
-              send_counts[p], MPI_C_DOUBLE_COMPLEX, p, 0, comm, &req);
-    requests.push_back(req);
+              geom.send_counts[p], MPI_C_DOUBLE_COMPLEX, p, 0, comm, &req);
+    geom.requests.push_back(req);
   }
 
   // Self-copy: async on GPU stream, overlaps with network transfers
   {
-    size_t send_byte_off = static_cast<size_t>(send_displs[myrank]) * elem_size;
-    size_t recv_byte_off = static_cast<size_t>(recv_displs[myrank]) * elem_size;
+    size_t send_byte_off = static_cast<size_t>(geom.send_displs[myrank]) * elem_size;
+    size_t recv_byte_off = static_cast<size_t>(geom.recv_displs[myrank]) * elem_size;
     backend.memcpy(
         reinterpret_cast<char *>(recv_into) + recv_byte_off,
         reinterpret_cast<char *>(send_from) + send_byte_off,
-        static_cast<size_t>(send_counts[myrank]) * elem_size);
+        static_cast<size_t>(geom.send_counts[myrank]) * elem_size);
   }
 
   // Wait for all remote transfers to complete
-  if (!requests.empty()) {
-    MPI_Waitall(static_cast<int>(requests.size()), requests.data(),
+  if (!geom.requests.empty()) {
+    MPI_Waitall(static_cast<int>(geom.requests.size()), geom.requests.data(),
                 MPI_STATUSES_IGNORE);
   }
 
   // Unpack recv_into into dst_array (skip when dst is already contiguous)
   // Async on stream, enqueued after MPI_Waitall guarantees data is valid.
-  if (!dst_contiguous) {
+  if (!geom.dst_contiguous) {
+    size_t dst_dpitch = static_cast<size_t>(geom.dst_axis_extent) * geom.dst_trailing * elem_size;
     for (int p = 0; p < nparts; ++p) {
-      int n, s;
-      decompose(dst_sizes[dst_axis], nparts, p, n, s);
-      size_t row_bytes = static_cast<size_t>(n) * dst_trailing * elem_size;
+      size_t row_bytes = static_cast<size_t>(geom.dst_n[p]) * geom.dst_trailing * elem_size;
       backend.memcpy2d(
-          reinterpret_cast<char *>(dst_array) + static_cast<size_t>(s) * dst_trailing * elem_size,
-          static_cast<size_t>(dst_sizes[dst_axis]) * dst_trailing * elem_size,
-          reinterpret_cast<char *>(recv_into) + static_cast<size_t>(recv_displs[p]) * elem_size,
+          reinterpret_cast<char *>(dst_array) + static_cast<size_t>(geom.dst_s[p]) * geom.dst_trailing * elem_size,
+          dst_dpitch,
+          reinterpret_cast<char *>(recv_into) + static_cast<size_t>(geom.recv_displs[p]) * elem_size,
           row_bytes,
           row_bytes,
-          dst_leading);
+          geom.dst_leading);
     }
   }
 }
 
 /**
- * @brief Hybrid exchange: mixes P2P direct GPU copies with MPI point-to-point.
+ * @brief Hybrid exchange using pre-computed geometry.
+ *
+ * Mixes P2P direct GPU copies with MPI point-to-point, using pre-computed
+ * ExchangeGeometry to avoid per-call allocations.
  *
  * For neighbours where P2P (IPC) is available, uses direct GPU-to-GPU memory
  * copies via IPC-mapped pointers. For non-P2P neighbours, falls back to MPI
  * Isend/Irecv. Two MPI_Barrier calls synchronize the P2P pack/read phases;
  * MPI transfers overlap with the P2P reads between the barriers.
  *
- * When all neighbours are P2P-capable, this degenerates to the pure-P2P path
- * (no MPI sends/recvs). When none are, this function should not be called —
- * use exchange_packed() instead.
+ * Optimization: when src data is already contiguous (src_leading == 1),
+ * uses a single memcpy into pack_buf instead of nparts strided 2D copies.
  *
  * @tparam BackendT FFT backend type
  * @param backend Backend instance for async memcpy
  * @param comm MPI subcommunicator
  * @param nparts Number of partitions
- * @param ndims Number of array dimensions
  * @param src_array Source array
- * @param src_sizes Source dimensions
- * @param src_axis Source partition axis
  * @param dst_array Destination array
- * @param dst_sizes Destination dimensions
- * @param dst_axis Destination partition axis
  * @param pack_buf Local pack buffer (IPC-exported)
  * @param remote_pack_ptrs IPC-mapped pointers (non-null for P2P neighbours)
  * @param peer_enabled Per-neighbour flags: nonzero = P2P, zero = MPI
+ * @param geom Pre-computed exchange geometry for this transition
  */
 template <typename BackendT>
 inline void exchange_hybrid(
     const BackendT &backend,
-    MPI_Comm comm, int nparts, int ndims,
-    typename BackendT::Complex *src_array, const int src_sizes[], int src_axis,
-    typename BackendT::Complex *dst_array, const int dst_sizes[], int dst_axis,
+    MPI_Comm comm, int nparts,
+    typename BackendT::Complex *src_array,
+    typename BackendT::Complex *dst_array,
     typename BackendT::Complex *pack_buf,
     void *const *remote_pack_ptrs,
-    const char *peer_enabled)
+    const char *peer_enabled,
+    ExchangeGeometry &geom)
 {
   using Complex = typename BackendT::Complex;
   size_t elem_size = sizeof(Complex);
 
-  // Compute send-side geometry
-  size_t src_leading = 1, src_trailing = 1;
-  for (int i = 0; i < src_axis; ++i) src_leading *= src_sizes[i];
-  for (int i = src_axis + 1; i < ndims; ++i) src_trailing *= src_sizes[i];
-
-  // Compute recv-side geometry
-  size_t dst_leading = 1, dst_trailing = 1;
-  for (int i = 0; i < dst_axis; ++i) dst_leading *= dst_sizes[i];
-  for (int i = dst_axis + 1; i < ndims; ++i) dst_trailing *= dst_sizes[i];
-
-  bool dst_contiguous = (dst_leading == 1);
-
-  // Compute send counts/displacements
-  std::vector<int> send_counts(nparts), send_displs(nparts);
-  size_t send_offset = 0;
-  for (int p = 0; p < nparts; ++p) {
-    int n, s;
-    decompose(src_sizes[src_axis], nparts, p, n, s);
-    size_t count = src_leading * n * src_trailing;
-    send_counts[p] = static_cast<int>(count);
-    send_displs[p] = static_cast<int>(send_offset);
-    send_offset += count;
-  }
-
-  // Compute recv counts/displacements
-  std::vector<int> recv_counts(nparts), recv_displs(nparts);
-  size_t recv_offset = 0;
-  for (int p = 0; p < nparts; ++p) {
-    int n, s;
-    decompose(dst_sizes[dst_axis], nparts, p, n, s);
-    size_t count = dst_leading * n * dst_trailing;
-    recv_counts[p] = static_cast<int>(count);
-    recv_displs[p] = static_cast<int>(recv_offset);
-    recv_offset += count;
-  }
-
-  // Always pack into pack_buf: P2P neighbours read via IPC handle,
+  // Pack into pack_buf: P2P neighbours read via IPC handle,
   // MPI neighbours send from pack_buf via Isend.
-  for (int p = 0; p < nparts; ++p) {
-    int n, s;
-    decompose(src_sizes[src_axis], nparts, p, n, s);
-    size_t row_bytes = static_cast<size_t>(n) * src_trailing * elem_size;
-    backend.memcpy2d(
-        reinterpret_cast<char *>(pack_buf) + static_cast<size_t>(send_displs[p]) * elem_size,
-        row_bytes,
-        reinterpret_cast<char *>(src_array) + static_cast<size_t>(s) * src_trailing * elem_size,
-        static_cast<size_t>(src_sizes[src_axis]) * src_trailing * elem_size,
-        row_bytes,
-        src_leading);
+  if (!geom.src_contiguous) {
+    size_t src_spitch = static_cast<size_t>(geom.src_axis_extent) * geom.src_trailing * elem_size;
+    for (int p = 0; p < nparts; ++p) {
+      size_t row_bytes = static_cast<size_t>(geom.src_n[p]) * geom.src_trailing * elem_size;
+      backend.memcpy2d(
+          reinterpret_cast<char *>(pack_buf) + static_cast<size_t>(geom.send_displs[p]) * elem_size,
+          row_bytes,
+          reinterpret_cast<char *>(src_array) + static_cast<size_t>(geom.src_s[p]) * geom.src_trailing * elem_size,
+          src_spitch,
+          row_bytes,
+          geom.src_leading);
+    }
+  } else {
+    // src is contiguous — single memcpy into pack_buf
+    size_t total_bytes = (static_cast<size_t>(geom.send_displs[nparts - 1]) +
+                          geom.send_counts[nparts - 1]) * elem_size;
+    backend.memcpy(pack_buf, src_array, total_bytes);
   }
 
   // Sync: ensure pack data is committed before MPI reads or P2P reads
@@ -409,59 +423,58 @@ inline void exchange_hybrid(
   MPI_Barrier(comm);
 
   // Choose recv buffer
-  Complex *recv_into = dst_contiguous ? dst_array : src_array;
+  Complex *recv_into = geom.dst_contiguous ? dst_array : src_array;
 
   int myrank;
   MPI_Comm_rank(comm, &myrank);
 
   // Post MPI Irecv/Isend for non-P2P neighbours
-  std::vector<MPI_Request> requests;
-  requests.reserve(2 * nparts);
+  geom.requests.clear();
   for (int p = 0; p < nparts; ++p) {
     if (p == myrank || peer_enabled[p]) continue;
-    size_t recv_byte_off = static_cast<size_t>(recv_displs[p]) * elem_size;
+    size_t recv_byte_off = static_cast<size_t>(geom.recv_displs[p]) * elem_size;
     MPI_Request req;
     MPI_Irecv(reinterpret_cast<char *>(recv_into) + recv_byte_off,
-              recv_counts[p], MPI_C_DOUBLE_COMPLEX, p, 0, comm, &req);
-    requests.push_back(req);
+              geom.recv_counts[p], MPI_C_DOUBLE_COMPLEX, p, 0, comm, &req);
+    geom.requests.push_back(req);
   }
   for (int p = 0; p < nparts; ++p) {
     if (p == myrank || peer_enabled[p]) continue;
-    size_t send_byte_off = static_cast<size_t>(send_displs[p]) * elem_size;
+    size_t send_byte_off = static_cast<size_t>(geom.send_displs[p]) * elem_size;
     MPI_Request req;
     MPI_Isend(reinterpret_cast<char *>(pack_buf) + send_byte_off,
-              send_counts[p], MPI_C_DOUBLE_COMPLEX, p, 0, comm, &req);
-    requests.push_back(req);
+              geom.send_counts[p], MPI_C_DOUBLE_COMPLEX, p, 0, comm, &req);
+    geom.requests.push_back(req);
   }
 
   // P2P direct GPU-to-GPU copy for capable neighbours
   for (int p = 0; p < nparts; ++p) {
     if (p == myrank || !peer_enabled[p]) continue;
-    size_t recv_byte_off = static_cast<size_t>(recv_displs[p]) * elem_size;
-    size_t remote_off = static_cast<size_t>(send_displs[myrank]) * elem_size;
+    size_t recv_byte_off = static_cast<size_t>(geom.recv_displs[p]) * elem_size;
+    size_t remote_off = static_cast<size_t>(geom.send_displs[myrank]) * elem_size;
     char *remote_buf = reinterpret_cast<char *>(remote_pack_ptrs[p]);
     backend.memcpy(
         reinterpret_cast<char *>(recv_into) + recv_byte_off,
         remote_buf + remote_off,
-        static_cast<size_t>(recv_counts[p]) * elem_size);
+        static_cast<size_t>(geom.recv_counts[p]) * elem_size);
   }
 
   // Self-copy (local rank)
   {
-    size_t send_byte_off = static_cast<size_t>(send_displs[myrank]) * elem_size;
-    size_t recv_byte_off = static_cast<size_t>(recv_displs[myrank]) * elem_size;
+    size_t send_byte_off = static_cast<size_t>(geom.send_displs[myrank]) * elem_size;
+    size_t recv_byte_off = static_cast<size_t>(geom.recv_displs[myrank]) * elem_size;
     backend.memcpy(
         reinterpret_cast<char *>(recv_into) + recv_byte_off,
         reinterpret_cast<char *>(pack_buf) + send_byte_off,
-        static_cast<size_t>(send_counts[myrank]) * elem_size);
+        static_cast<size_t>(geom.send_counts[myrank]) * elem_size);
   }
 
   // Sync stream: ensure P2P reads and self-copy complete
   backend.sync();
 
   // Wait for MPI transfers to complete
-  if (!requests.empty()) {
-    MPI_Waitall(static_cast<int>(requests.size()), requests.data(),
+  if (!geom.requests.empty()) {
+    MPI_Waitall(static_cast<int>(geom.requests.size()), geom.requests.data(),
                 MPI_STATUSES_IGNORE);
   }
 
@@ -469,18 +482,17 @@ inline void exchange_hybrid(
   MPI_Barrier(comm);
 
   // Unpack recv_into into dst_array (skip when dst is already contiguous)
-  if (!dst_contiguous) {
+  if (!geom.dst_contiguous) {
+    size_t dst_dpitch = static_cast<size_t>(geom.dst_axis_extent) * geom.dst_trailing * elem_size;
     for (int p = 0; p < nparts; ++p) {
-      int n, s;
-      decompose(dst_sizes[dst_axis], nparts, p, n, s);
-      size_t row_bytes = static_cast<size_t>(n) * dst_trailing * elem_size;
+      size_t row_bytes = static_cast<size_t>(geom.dst_n[p]) * geom.dst_trailing * elem_size;
       backend.memcpy2d(
-          reinterpret_cast<char *>(dst_array) + static_cast<size_t>(s) * dst_trailing * elem_size,
-          static_cast<size_t>(dst_sizes[dst_axis]) * dst_trailing * elem_size,
-          reinterpret_cast<char *>(recv_into) + static_cast<size_t>(recv_displs[p]) * elem_size,
+          reinterpret_cast<char *>(dst_array) + static_cast<size_t>(geom.dst_s[p]) * geom.dst_trailing * elem_size,
+          dst_dpitch,
+          reinterpret_cast<char *>(recv_into) + static_cast<size_t>(geom.recv_displs[p]) * elem_size,
           row_bytes,
           row_bytes,
-          dst_leading);
+          geom.dst_leading);
     }
   }
 }

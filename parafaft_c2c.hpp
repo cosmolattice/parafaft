@@ -469,18 +469,16 @@ public:
                    exchange_displs_.data());
         } else if (p2p_info_[stage].any_enabled) {
           exchange_hybrid<Backend>(
-              backend_, subcomms_[next_axis], nparts_[stage], D,
-              src, stage_shapes_[stage].data(), D - 1 - stage,
-              dst, stage_shapes_[stage + 1].data(), D - 2 - stage,
-              pack_buffer_.data(),
+              backend_, subcomms_[next_axis], nparts_[stage],
+              src, dst, pack_buffer_.data(),
               p2p_info_[stage].remote_pack_ptrs.data(),
-              p2p_info_[stage].peer_enabled.data());
+              p2p_info_[stage].peer_enabled.data(),
+              fwd_exchange_geom_[stage]);
         } else {
           exchange_packed<Backend>(
-              backend_, subcomms_[next_axis], nparts_[stage], D,
-              src, stage_shapes_[stage].data(), D - 1 - stage,
-              dst, stage_shapes_[stage + 1].data(), D - 2 - stage,
-              pack_buffer_.data());
+              backend_, subcomms_[next_axis], nparts_[stage],
+              src, dst, pack_buffer_.data(),
+              fwd_exchange_geom_[stage]);
         }
         std::swap(src, dst);
       }
@@ -557,20 +555,16 @@ public:
                    exchange_displs_.data());
         } else if (p2p_info_[trans].any_enabled) {
           exchange_hybrid<Backend>(
-              backend_, subcomms_[comm_idx], nparts_[trans], D,
-              src, stage_shapes_[trans + 1].data(), D - 2 - trans,
-              dst, stage_shapes_[trans].data(), D - 1 - trans,
-              pack_buffer_.data(),
+              backend_, subcomms_[comm_idx], nparts_[trans],
+              src, dst, pack_buffer_.data(),
               p2p_info_[trans].remote_pack_ptrs.data(),
-              p2p_info_[trans].peer_enabled.data());
+              p2p_info_[trans].peer_enabled.data(),
+              bwd_exchange_geom_[trans]);
         } else {
-          // Backward reverses forward: send from stage_shapes_[trans+1]
-          // along D-2-trans, recv into stage_shapes_[trans] along D-1-trans
           exchange_packed<Backend>(
-              backend_, subcomms_[comm_idx], nparts_[trans], D,
-              src, stage_shapes_[trans + 1].data(), D - 2 - trans,
-              dst, stage_shapes_[trans].data(), D - 1 - trans,
-              pack_buffer_.data());
+              backend_, subcomms_[comm_idx], nparts_[trans],
+              src, dst, pack_buffer_.data(),
+              bwd_exchange_geom_[trans]);
         }
         std::swap(src, dst);
       }
@@ -621,6 +615,23 @@ private:
                  nparts_[t], fwd_send_types_[t].data());
         subarray(MPI_C_DOUBLE_COMPLEX, D, stage_shapes_[t + 1].data(),
                  recv_axis, nparts_[t], fwd_recv_types_[t].data());
+      }
+    }
+
+    // Pre-compute exchange geometry for packed/hybrid paths (GPU backends)
+    if constexpr (!Backend::use_alltoallw) {
+      fwd_exchange_geom_.resize(D - 1);
+      bwd_exchange_geom_.resize(D - 1);
+      for (int t = 0; t < D - 1; ++t) {
+        int send_axis = D - 1 - t;
+        int recv_axis = D - 2 - t;
+        init_exchange_geometry(fwd_exchange_geom_[t], nparts_[t], D,
+                               stage_shapes_[t].data(), send_axis,
+                               stage_shapes_[t + 1].data(), recv_axis);
+        // Backward is forward with src/dst swapped
+        init_exchange_geometry(bwd_exchange_geom_[t], nparts_[t], D,
+                               stage_shapes_[t + 1].data(), recv_axis,
+                               stage_shapes_[t].data(), send_axis);
       }
     }
   }
@@ -870,6 +881,10 @@ private:
   std::vector<int> exchange_counts_;
   /// Pre-allocated displacements array for MPI_Alltoallw (all 0s)
   std::vector<int> exchange_displs_;
+
+  /// Pre-computed exchange geometry for packed/hybrid paths (GPU backends)
+  std::vector<ExchangeGeometry> fwd_exchange_geom_;
+  std::vector<ExchangeGeometry> bwd_exchange_geom_;
 
   /// Per-subcommunicator P2P exchange info (GPU backends only)
   struct P2PInfo {
