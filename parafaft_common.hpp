@@ -234,6 +234,62 @@ inline void exchange(MPI_Comm comm, int nparts, void *arrayA,
 }
 
 /**
+ * @brief Local exchange for single-rank subcommunicators (nparts == 1).
+ *
+ * When a subcommunicator has only one rank, no MPI communication is needed.
+ * This performs a direct src → dst data movement (possibly with layout
+ * transformation) without any synchronization overhead.
+ *
+ * @tparam BackendT FFT backend type (must provide memcpy, memcpy2d)
+ * @param backend Backend instance for async memcpy
+ * @param src_array Source array
+ * @param dst_array Destination array
+ * @param pack_buf Temporary buffer (used only when both src and dst are strided)
+ * @param geom Pre-computed exchange geometry for this transition
+ */
+template <typename BackendT>
+inline void exchange_local(
+    const BackendT &backend,
+    typename BackendT::Complex *src_array,
+    typename BackendT::Complex *dst_array,
+    typename BackendT::Complex *pack_buf,
+    const ExchangeGeometry &geom)
+{
+  using Complex = typename BackendT::Complex;
+  size_t elem_size = sizeof(Complex);
+  size_t total_bytes = static_cast<size_t>(geom.send_counts[0]) * elem_size;
+
+  if (geom.src_contiguous && geom.dst_contiguous) {
+    // Both contiguous: single memcpy
+    backend.memcpy(dst_array, src_array, total_bytes);
+  } else if (geom.dst_contiguous) {
+    // Strided src → contiguous dst: single memcpy2d
+    size_t src_spitch = static_cast<size_t>(geom.src_axis_extent) * geom.src_trailing * elem_size;
+    size_t row_bytes = static_cast<size_t>(geom.src_n[0]) * geom.src_trailing * elem_size;
+    backend.memcpy2d(dst_array, row_bytes, src_array, src_spitch,
+                     row_bytes, geom.src_leading);
+  } else if (geom.src_contiguous) {
+    // Contiguous src → strided dst: single memcpy2d
+    size_t dst_dpitch = static_cast<size_t>(geom.dst_axis_extent) * geom.dst_trailing * elem_size;
+    size_t row_bytes = static_cast<size_t>(geom.dst_n[0]) * geom.dst_trailing * elem_size;
+    backend.memcpy2d(dst_array, dst_dpitch, src_array, row_bytes,
+                     row_bytes, geom.dst_leading);
+  } else {
+    // Both non-contiguous: pack src → pack_buf, then unpack pack_buf → dst
+    // (No sync needed between — both are on the same stream)
+    size_t src_spitch = static_cast<size_t>(geom.src_axis_extent) * geom.src_trailing * elem_size;
+    size_t src_row_bytes = static_cast<size_t>(geom.src_n[0]) * geom.src_trailing * elem_size;
+    backend.memcpy2d(pack_buf, src_row_bytes, src_array, src_spitch,
+                     src_row_bytes, geom.src_leading);
+
+    size_t dst_dpitch = static_cast<size_t>(geom.dst_axis_extent) * geom.dst_trailing * elem_size;
+    size_t dst_row_bytes = static_cast<size_t>(geom.dst_n[0]) * geom.dst_trailing * elem_size;
+    backend.memcpy2d(dst_array, dst_dpitch, pack_buf, dst_row_bytes,
+                     dst_row_bytes, geom.dst_leading);
+  }
+}
+
+/**
  * @brief Packed exchange using pre-computed geometry.
  *
  * Replaces MPI_Alltoallw with derived subarray types by explicitly packing

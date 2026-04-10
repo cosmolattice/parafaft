@@ -333,6 +333,10 @@ public:
                  fwd_send_types_[trans].data(), dst,
                  fwd_recv_types_[trans].data(), exchange_counts_.data(),
                  exchange_displs_.data());
+      } else if (nparts_[trans] == 1) {
+        // Single-rank subcommunicator: local reshape, no MPI needed
+        exchange_local<Backend>(backend_, src, dst, pack_buffer_.data(),
+                                fwd_exchange_geom_[trans]);
       } else if (p2p_info_[trans].any_enabled) {
         exchange_hybrid<Backend>(backend_, subcomms_[axis], nparts_[trans],
                                  src, dst, pack_buffer_.data(),
@@ -439,6 +443,10 @@ public:
                  fwd_recv_types_[trans].data(), dst,
                  fwd_send_types_[trans].data(), exchange_counts_.data(),
                  exchange_displs_.data());
+      } else if (nparts_[trans] == 1) {
+        // Single-rank subcommunicator: local reshape, no MPI needed
+        exchange_local<Backend>(backend_, src, dst, pack_buffer_.data(),
+                                bwd_exchange_geom_[trans]);
       } else if (p2p_info_[trans].any_enabled) {
         exchange_hybrid<Backend>(backend_, subcomms_[axis], nparts_[trans],
                                  src, dst, pack_buffer_.data(),
