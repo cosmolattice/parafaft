@@ -194,15 +194,13 @@ public:
    * @brief Create FFT plans for all stages using the backend.
    *
    * Analyzes the memory layout for each stage and creates appropriate plans
-   * with correct stride and distance parameters. Uses a temporary buffer for
-   * plan creation since FFTW's new-array execute API allows plans to be applied
-   * to any buffer with the same layout.
+   * with correct stride and distance parameters.
+   *
+   * Reuses scratch_buffer_ (already allocated, large enough for all stages) as
+   * the planning buffer. FFTW's new-array execute API allows plans created with
+   * one buffer to be executed on any buffer with compatible alignment/layout.
    */
   void create_backend_plans() {
-    // Use a temporary buffer for plan creation (FFTW new-array execute API
-    // allows plans to be applied to any buffer with compatible alignment)
-    ComplexBuffer plan_temp(max_stage_size_);
-
     for (int stage = 0; stage < D; ++stage) {
       int axis = D - 1 - stage;
       int length = global_shape_[axis];
@@ -214,8 +212,8 @@ public:
         for (int i = 0; i < D - 1; ++i) {
           batch *= stage_shapes_[stage][i];
         }
-        backend_.create_stage_plan(stage, length, batch, plan_temp.data(), 1,
-                                   length);
+        backend_.create_stage_plan(stage, length, batch,
+                                   scratch_buffer_.data(), 1, length);
 
       } else if (axis == 0) {
         // First axis: strided FFTs
@@ -224,8 +222,8 @@ public:
           batch *= stage_shapes_[stage][i];
         }
         int stride = batch;
-        backend_.create_stage_plan(stage, length, batch, plan_temp.data(),
-                                   stride, 1);
+        backend_.create_stage_plan(stage, length, batch,
+                                   scratch_buffer_.data(), stride, 1);
 
       } else {
         // Middle axis: need to handle via loops in perform_fft_on_buffer
@@ -236,7 +234,7 @@ public:
         }
         // Plan will be called multiple times for leading dimensions
         backend_.create_stage_plan(stage, length, trailing_size,
-                                   plan_temp.data(), trailing_size, 1);
+                                   scratch_buffer_.data(), trailing_size, 1);
       }
     }
   }

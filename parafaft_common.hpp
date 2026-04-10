@@ -447,15 +447,22 @@ inline void exchange_hybrid(
     geom.requests.push_back(req);
   }
 
-  // P2P reads + self-copy in a single loop.
-  // The natural iteration order staggers P2P reads across ranks: rank 0
-  // hits self (fast local copy) at p=0 before its remote read at p=1,
-  // while rank 1 does the remote read at p=0 first.  This avoids
-  // simultaneous bidirectional PCIe P2P traffic that saturates shared
-  // switches and can degrade throughput by 10x or more.
-  for (int p = 0; p < nparts; ++p) {
+  // Round-robin P2P schedule: p = (myrank + step) % nparts.
+  // Step 0 is always self-copy (local D2D, zero PCIe traffic).  Subsequent
+  // steps form a ring pattern where each source GPU is read by exactly one
+  // peer per step, avoiding PCIe switch saturation from multiple ranks
+  // reading the same source simultaneously.
+  //
+  // backend.sync() between P2P reads (step > 1) serialises each rank's
+  // outstanding reads to at most one at a time.  The sync is skipped for
+  // the first P2P read (step 1) so that on 2-GPU systems the GPU stream's
+  // natural ordering — self-copy before the P2P read — provides a timing
+  // stagger that avoids simultaneous bidirectional PCIe traffic.
+  for (int step = 0; step < nparts; ++step) {
+    int p = (myrank + step) % nparts;
+
     if (p == myrank) {
-      // Self-copy from local pack buffer
+      // Self-copy from local pack buffer (no PCIe, no sync needed)
       size_t send_byte_off = static_cast<size_t>(geom.send_displs[myrank]) * elem_size;
       size_t recv_byte_off = static_cast<size_t>(geom.recv_displs[myrank]) * elem_size;
       backend.memcpy(
@@ -463,6 +470,11 @@ inline void exchange_hybrid(
           reinterpret_cast<char *>(pack_buf) + send_byte_off,
           static_cast<size_t>(geom.send_counts[myrank]) * elem_size);
     } else if (peer_enabled[p]) {
+      // Serialise: wait for previous P2P copy before issuing the next.
+      // Skipped at step 1 to preserve stream-ordering stagger (see above).
+      if (step > 1) {
+        backend.sync();
+      }
       // P2P direct GPU-to-GPU copy via IPC-mapped pointer
       size_t recv_byte_off = static_cast<size_t>(geom.recv_displs[p]) * elem_size;
       size_t remote_off = static_cast<size_t>(geom.send_displs[myrank]) * elem_size;
