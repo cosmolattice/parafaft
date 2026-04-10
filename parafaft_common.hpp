@@ -447,26 +447,31 @@ inline void exchange_hybrid(
     geom.requests.push_back(req);
   }
 
-  // P2P direct GPU-to-GPU copy for capable neighbours
+  // P2P reads + self-copy in a single loop.
+  // The natural iteration order staggers P2P reads across ranks: rank 0
+  // hits self (fast local copy) at p=0 before its remote read at p=1,
+  // while rank 1 does the remote read at p=0 first.  This avoids
+  // simultaneous bidirectional PCIe P2P traffic that saturates shared
+  // switches and can degrade throughput by 10x or more.
   for (int p = 0; p < nparts; ++p) {
-    if (p == myrank || !peer_enabled[p]) continue;
-    size_t recv_byte_off = static_cast<size_t>(geom.recv_displs[p]) * elem_size;
-    size_t remote_off = static_cast<size_t>(geom.send_displs[myrank]) * elem_size;
-    char *remote_buf = reinterpret_cast<char *>(remote_pack_ptrs[p]);
-    backend.memcpy(
-        reinterpret_cast<char *>(recv_into) + recv_byte_off,
-        remote_buf + remote_off,
-        static_cast<size_t>(geom.recv_counts[p]) * elem_size);
-  }
-
-  // Self-copy (local rank)
-  {
-    size_t send_byte_off = static_cast<size_t>(geom.send_displs[myrank]) * elem_size;
-    size_t recv_byte_off = static_cast<size_t>(geom.recv_displs[myrank]) * elem_size;
-    backend.memcpy(
-        reinterpret_cast<char *>(recv_into) + recv_byte_off,
-        reinterpret_cast<char *>(pack_buf) + send_byte_off,
-        static_cast<size_t>(geom.send_counts[myrank]) * elem_size);
+    if (p == myrank) {
+      // Self-copy from local pack buffer
+      size_t send_byte_off = static_cast<size_t>(geom.send_displs[myrank]) * elem_size;
+      size_t recv_byte_off = static_cast<size_t>(geom.recv_displs[myrank]) * elem_size;
+      backend.memcpy(
+          reinterpret_cast<char *>(recv_into) + recv_byte_off,
+          reinterpret_cast<char *>(pack_buf) + send_byte_off,
+          static_cast<size_t>(geom.send_counts[myrank]) * elem_size);
+    } else if (peer_enabled[p]) {
+      // P2P direct GPU-to-GPU copy via IPC-mapped pointer
+      size_t recv_byte_off = static_cast<size_t>(geom.recv_displs[p]) * elem_size;
+      size_t remote_off = static_cast<size_t>(geom.send_displs[myrank]) * elem_size;
+      char *remote_buf = reinterpret_cast<char *>(remote_pack_ptrs[p]);
+      backend.memcpy(
+          reinterpret_cast<char *>(recv_into) + recv_byte_off,
+          remote_buf + remote_off,
+          static_cast<size_t>(geom.recv_counts[p]) * elem_size);
+    }
   }
 
   // Sync stream: ensure P2P reads and self-copy complete
