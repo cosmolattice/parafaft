@@ -116,78 +116,98 @@ public:
       global_shape_[i] = global_shape[i];
     }
 
-    // Create (D-1)-dimensional Cartesian processor grid
-    // Paper Section 2.2: This topology enables efficient subcommunicators
-    int dims[D - 1];
-    for (int i = 0; i < D - 1; ++i)
-      dims[i] = 0;
-    MPI_Dims_create(size_, D - 1, dims); // Balanced grid dimensions
-
-    for (int i = 0; i < D - 1; ++i) {
-      dims_[i] = dims[i];
-    }
-
-    // Create Cartesian communicator (non-periodic)
-    int periods[D - 1];
-    for (int i = 0; i < D - 1; ++i)
-      periods[i] = 0;
-    MPI_Cart_create(comm_world_, D - 1, dims, periods, 1, &comm_cart_);
-
-    // Get this processor's coordinates in the grid
-    // These coordinates determine which data partition this processor owns
-    MPI_Cart_coords(comm_cart_, rank_, D - 1, coords_);
-
-    // Create (D-1) subcommunicators, one for each grid dimension
-    // Paper Section 2.2: These enable efficient all-to-all communication
-    // along specific dimensions during redistribution
-    //
-    // subcomms_[i] contains all processors that differ only in coordinate i
-    // This is used for redistributing along grid dimension i
-    for (int i = 0; i < D - 1; ++i) {
-      int remain_dims[D - 1];
-      for (int j = 0; j < D - 1; ++j)
-        remain_dims[j] = 0;
-      remain_dims[i] = 1; // Keep only dimension i
-      MPI_Cart_sub(comm_cart_, remain_dims, &subcomms_[i]);
-    }
-
-    // Compute local array shapes for each stage
-    // This determines data distribution at each stage of the algorithm
-    setup_stage_shapes();
-
-    // Cache MPI subarray datatypes for all stage transitions.
-    // For each of (D-1) transitions between stage t and stage t+1:
-    //   fwd_send_types_[t]: send types (subarray of stage_shapes_[t] along axis
-    //   D-1-t) fwd_recv_types_[t]: recv types (subarray of stage_shapes_[t+1]
-    //   along axis D-2-t)
-    // Backward uses these in reverse: send=fwd_recv, recv=fwd_send.
-    cache_exchange_types();
-
-    // Compute maximum buffer size across all stages for ping-pong allocation
-    max_stage_size_ = 0;
-    for (int stage = 0; stage < D; ++stage) {
-      int size = 1;
+    if constexpr (Backend::handles_distributed) {
+      // Backend handles MPI decomposition, communication, and FFT internally
+      // (e.g., cuFFTMp with NVSHMEM, rocFFT with MPI)
+      backend_.setup_distributed(global_shape, comm);
+      auto info = backend_.get_distributed_info();
+      // Store shapes for public API queries — use stage_shapes_[0] for input,
+      // stage_shapes_[D-1] for output (reusing existing member storage)
+      stage_shapes_.resize(D);
+      for (int s = 0; s < D; ++s) stage_shapes_[s].resize(D);
       for (int i = 0; i < D; ++i) {
-        size *= stage_shapes_[stage][i];
+        stage_shapes_[0][i] = info.local_shape[i];
+        stage_shapes_[D - 1][i] = info.output_shape[i];
+        global_start_[i] = info.global_start[i];
+        output_start_[i] = info.output_start[i];
       }
-      max_stage_size_ = std::max(max_stage_size_, size);
+      max_stage_size_ = info.required_size;
+    } else {
+      // Standard ParaFaFT: manual pencil decomposition + MPI exchange
+
+      // Create (D-1)-dimensional Cartesian processor grid
+      // Paper Section 2.2: This topology enables efficient subcommunicators
+      int dims[D - 1];
+      for (int i = 0; i < D - 1; ++i)
+        dims[i] = 0;
+      MPI_Dims_create(size_, D - 1, dims); // Balanced grid dimensions
+
+      for (int i = 0; i < D - 1; ++i) {
+        dims_[i] = dims[i];
+      }
+
+      // Create Cartesian communicator (non-periodic)
+      int periods[D - 1];
+      for (int i = 0; i < D - 1; ++i)
+        periods[i] = 0;
+      MPI_Cart_create(comm_world_, D - 1, dims, periods, 1, &comm_cart_);
+
+      // Get this processor's coordinates in the grid
+      // These coordinates determine which data partition this processor owns
+      MPI_Cart_coords(comm_cart_, rank_, D - 1, coords_);
+
+      // Create (D-1) subcommunicators, one for each grid dimension
+      // Paper Section 2.2: These enable efficient all-to-all communication
+      // along specific dimensions during redistribution
+      //
+      // subcomms_[i] contains all processors that differ only in coordinate i
+      // This is used for redistributing along grid dimension i
+      for (int i = 0; i < D - 1; ++i) {
+        int remain_dims[D - 1];
+        for (int j = 0; j < D - 1; ++j)
+          remain_dims[j] = 0;
+        remain_dims[i] = 1; // Keep only dimension i
+        MPI_Cart_sub(comm_cart_, remain_dims, &subcomms_[i]);
+      }
+
+      // Compute local array shapes for each stage
+      // This determines data distribution at each stage of the algorithm
+      setup_stage_shapes();
+
+      // Cache MPI subarray datatypes for all stage transitions.
+      // For each of (D-1) transitions between stage t and stage t+1:
+      //   fwd_send_types_[t]: send types (subarray of stage_shapes_[t] along axis
+      //   D-1-t) fwd_recv_types_[t]: recv types (subarray of stage_shapes_[t+1]
+      //   along axis D-2-t)
+      // Backward uses these in reverse: send=fwd_recv, recv=fwd_send.
+      cache_exchange_types();
+
+      // Compute maximum buffer size across all stages for ping-pong allocation
+      max_stage_size_ = 0;
+      for (int stage = 0; stage < D; ++stage) {
+        int size = 1;
+        for (int i = 0; i < D; ++i) {
+          size *= stage_shapes_[stage][i];
+        }
+        max_stage_size_ = std::max(max_stage_size_, size);
+      }
+
+      // Allocate single scratch buffer for ping-pong with user's data buffer.
+      // The user's buffer (sized to get_required_output_size()) serves as one
+      // ping-pong buffer; this scratch buffer serves as the other.
+      scratch_buffer_.resize(max_stage_size_);
+
+      // Allocate pack buffer for manual packing exchange (GPU backends)
+      if constexpr (!Backend::use_alltoallw) {
+        pack_buffer_.resize(max_stage_size_);
+      }
+
+      // Create FFT plans for all stages
+      create_backend_plans();
+
+      // Set up P2P IPC for same-node GPU exchanges
+      setup_p2p();
     }
-
-    // Allocate single scratch buffer for ping-pong with user's data buffer.
-    // The user's buffer (sized to get_required_output_size()) serves as one
-    // ping-pong buffer; this scratch buffer serves as the other.
-    scratch_buffer_.resize(max_stage_size_);
-
-    // Allocate pack buffer for manual packing exchange (GPU backends)
-    if constexpr (!Backend::use_alltoallw) {
-      pack_buffer_.resize(max_stage_size_);
-    }
-
-    // Create FFT plans for all stages
-    create_backend_plans();
-
-    // Set up P2P IPC for same-node GPU exchanges
-    setup_p2p();
   }
 
   /**
@@ -355,16 +375,39 @@ public:
    * indices.
    */
   void get_final_start(int start[D]) const {
-    // For final stage, need to compute based on which axes are distributed
-    // Stage D-1: axes [D-1, ..., 1] have been processed, axis 0 is fully local
-    // Axes [1, 2, ..., D-1] are distributed using grid dimensions [0, 1, ...,
-    // D-2]
-    start[0] = 0; // Axis 0 is not distributed in final stage
-    for (int i = 1; i < D; ++i) {
-      // Axis i is distributed on grid dimension i-1
-      int n, s;
-      decompose(global_shape_[i], dims_[i - 1], coords_[i - 1], n, s);
-      start[i] = s;
+    if constexpr (Backend::handles_distributed) {
+      for (int i = 0; i < D; ++i) start[i] = output_start_[i];
+    } else {
+      // For final stage, need to compute based on which axes are distributed
+      // Stage D-1: axes [D-1, ..., 1] have been processed, axis 0 is fully local
+      // Axes [1, 2, ..., D-1] are distributed using grid dimensions [0, 1, ...,
+      // D-2]
+      start[0] = 0; // Axis 0 is not distributed in final stage
+      for (int i = 1; i < D; ++i) {
+        // Axis i is distributed on grid dimension i-1
+        int n, s;
+        decompose(global_shape_[i], dims_[i - 1], coords_[i - 1], n, s);
+        start[i] = s;
+      }
+    }
+  }
+
+  /**
+   * @brief Get the backend-managed buffer for distributed transforms.
+   *
+   * When the backend handles distributed transforms (e.g., cuFFTMp), the
+   * buffer is allocated by the backend using optimized memory (e.g., NVSHMEM).
+   * Users should write data into this buffer before calling forward() and
+   * read results from it after. The memory is usable like normal device memory.
+   *
+   * @return Device pointer to the internal buffer, or nullptr if the backend
+   *         does not manage its own buffer.
+   */
+  Complex* get_buffer() {
+    if constexpr (Backend::handles_distributed) {
+      return backend_.get_buffer();
+    } else {
+      return nullptr;
     }
   }
 
@@ -428,6 +471,10 @@ public:
    * normalization.
    */
   void forward(Complex *data) {
+    if constexpr (Backend::handles_distributed) {
+      backend_.forward();
+      return;
+    }
     // Determine starting buffer based on parity of swaps.
     // D-1 exchanges → D-1 swaps. After all swaps, src holds the final result.
     // We want the result to end up in data (the user's buffer).
@@ -519,6 +566,10 @@ public:
    * scaling).
    */
   void backward(Complex *data) {
+    if constexpr (Backend::handles_distributed) {
+      backend_.backward();
+      return;
+    }
     // Determine starting buffer based on parity of swaps.
     // D-1 exchanges → D-1 swaps. We want the result to end up in data.
     Complex *src;
@@ -867,6 +918,7 @@ private:
 
   int global_shape_[D]; ///< Global array dimensions
   int global_start_[D]; ///< Starting indices for this processor (stage 0)
+  int output_start_[D]; ///< Starting indices for output (stage D-1), used by distributed backends
 
   /// Local array shape at each stage: stage_shapes_[stage][axis]
   std::vector<std::vector<int>> stage_shapes_;

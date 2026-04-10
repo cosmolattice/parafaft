@@ -138,69 +138,93 @@ public:
       global_real_shape_[i] = global_shape[i];
     }
 
-    // Create (D-1)-dimensional Cartesian processor grid
-    int dims[D - 1];
-    for (int i = 0; i < D - 1; ++i)
-      dims[i] = 0;
-    MPI_Dims_create(size_, D - 1, dims);
-
-    for (int i = 0; i < D - 1; ++i) {
-      dims_[i] = dims[i];
-    }
-
-    // Create Cartesian communicator (non-periodic)
-    int periods[D - 1];
-    for (int i = 0; i < D - 1; ++i)
-      periods[i] = 0;
-    MPI_Cart_create(comm_world_, D - 1, dims, periods, 1, &comm_cart_);
-
-    // Get this processor's coordinates in the grid
-    MPI_Cart_coords(comm_cart_, rank_, D - 1, coords_);
-
-    // Create (D-1) subcommunicators
-    for (int i = 0; i < D - 1; ++i) {
-      int remain_dims[D - 1];
-      for (int j = 0; j < D - 1; ++j)
-        remain_dims[j] = 0;
-      remain_dims[i] = 1;
-      MPI_Cart_sub(comm_cart_, remain_dims, &subcomms_[i]);
-    }
-
-    // Compute local array shapes for each stage
-    setup_stage_shapes();
-
-    // Cache MPI subarray datatypes for all stage transitions.
-    // For each of (D-1) transitions between stage t and stage t+1:
-    //   fwd_send_types_[t]: send types (subarray of stage_output_shapes_[t]
-    //   along axis D-1-t) fwd_recv_types_[t]: recv types (subarray of
-    //   stage_shapes_[t+1] along axis D-2-t)
-    // Backward uses these in reverse: send=fwd_recv, recv=fwd_send.
-    cache_exchange_types();
-
-    // Compute maximum complex buffer size across all stages
-    int max_complex_size = 0;
-    for (int stage = 0; stage < D; ++stage) {
-      int size = 1;
+    if constexpr (Backend::handles_distributed) {
+      // Backend handles MPI decomposition, communication, and FFT internally
+      backend_.setup_distributed(global_shape, comm);
+      auto info = backend_.get_distributed_info();
+      // Store shapes for public API queries
+      stage_shapes_.resize(1);
+      stage_shapes_[0].resize(D);
+      stage_output_shapes_.resize(1);
+      stage_output_shapes_[0].resize(D);
       for (int i = 0; i < D; ++i) {
-        size *= stage_output_shapes_[stage][i];
+        stage_shapes_[0][i] = info.local_shape[i];
+        stage_output_shapes_[0][i] = info.output_shape[i];
+        real_global_start_[i] = info.global_start[i];
+        complex_global_start_[i] = info.output_start[i];
       }
-      max_complex_size = std::max(max_complex_size, size);
+      // Store complex global shape for R2C (last axis N/2+1)
+      for (int i = 0; i < D; ++i) {
+        global_complex_shape_[i] = global_real_shape_[i];
+      }
+      global_complex_shape_[D - 1] = global_real_shape_[D - 1] / 2 + 1;
+      // required_size is stored via stage_output_shapes_ for get_required_output_size()
+    } else {
+      // Standard ParaFaFT: manual pencil decomposition + MPI exchange
+
+      // Create (D-1)-dimensional Cartesian processor grid
+      int dims[D - 1];
+      for (int i = 0; i < D - 1; ++i)
+        dims[i] = 0;
+      MPI_Dims_create(size_, D - 1, dims);
+
+      for (int i = 0; i < D - 1; ++i) {
+        dims_[i] = dims[i];
+      }
+
+      // Create Cartesian communicator (non-periodic)
+      int periods[D - 1];
+      for (int i = 0; i < D - 1; ++i)
+        periods[i] = 0;
+      MPI_Cart_create(comm_world_, D - 1, dims, periods, 1, &comm_cart_);
+
+      // Get this processor's coordinates in the grid
+      MPI_Cart_coords(comm_cart_, rank_, D - 1, coords_);
+
+      // Create (D-1) subcommunicators
+      for (int i = 0; i < D - 1; ++i) {
+        int remain_dims[D - 1];
+        for (int j = 0; j < D - 1; ++j)
+          remain_dims[j] = 0;
+        remain_dims[i] = 1;
+        MPI_Cart_sub(comm_cart_, remain_dims, &subcomms_[i]);
+      }
+
+      // Compute local array shapes for each stage
+      setup_stage_shapes();
+
+      // Cache MPI subarray datatypes for all stage transitions.
+      // For each of (D-1) transitions between stage t and stage t+1:
+      //   fwd_send_types_[t]: send types (subarray of stage_output_shapes_[t]
+      //   along axis D-1-t) fwd_recv_types_[t]: recv types (subarray of
+      //   stage_shapes_[t+1] along axis D-2-t)
+      // Backward uses these in reverse: send=fwd_recv, recv=fwd_send.
+      cache_exchange_types();
+
+      // Compute maximum complex buffer size across all stages
+      int max_complex_size = 0;
+      for (int stage = 0; stage < D; ++stage) {
+        int size = 1;
+        for (int i = 0; i < D; ++i) {
+          size *= stage_output_shapes_[stage][i];
+        }
+        max_complex_size = std::max(max_complex_size, size);
+      }
+
+      // Allocate ping-pong buffer sized to handle any stage
+      scratch_b_.resize(max_complex_size);
+
+      // Allocate pack buffer for manual packing exchange (GPU backends)
+      if constexpr (!Backend::use_alltoallw) {
+        pack_buffer_.resize(max_complex_size);
+      }
+
+      // Create FFT plans
+      create_backend_plans();
+
+      // Set up P2P IPC for same-node GPU exchanges
+      setup_p2p();
     }
-
-    // Allocate ping-pong buffer sized to handle any stage
-    // (scratch_a_ was removed - only used during planning, now uses local temp)
-    scratch_b_.resize(max_complex_size);
-
-    // Allocate pack buffer for manual packing exchange (GPU backends)
-    if constexpr (!Backend::use_alltoallw) {
-      pack_buffer_.resize(max_complex_size);
-    }
-
-    // Create FFT plans
-    create_backend_plans();
-
-    // Set up P2P IPC for same-node GPU exchanges
-    setup_p2p();
   }
 
   /**
@@ -294,6 +318,10 @@ public:
    * @warning Input real data is destroyed during computation!
    */
   void forward_in_place(double *padded_buffer) {
+    if constexpr (Backend::handles_distributed) {
+      backend_.forward_r2c();
+      return;
+    }
     // Reinterpret padded real buffer as complex for ping-pong
     Complex *padded_as_complex = reinterpret_cast<Complex *>(padded_buffer);
 
@@ -403,6 +431,10 @@ public:
    * @warning Input complex data is destroyed during computation!
    */
   void backward_in_place(double *padded_buffer) {
+    if constexpr (Backend::handles_distributed) {
+      backend_.backward_c2r();
+      return;
+    }
     // Reinterpret padded real buffer as complex for ping-pong
     Complex *padded_as_complex = reinterpret_cast<Complex *>(padded_buffer);
 
@@ -642,6 +674,38 @@ public:
       decomposition[i] = dims_[i];
     }
     decomposition[D - 1] = 1; // Last dimension not distributed
+  }
+
+  /**
+   * @brief Get the backend-managed buffer for distributed transforms.
+   *
+   * When the backend handles distributed transforms (e.g., cuFFTMp), the
+   * buffer is allocated using optimized memory (e.g., NVSHMEM). Users should
+   * write padded real data into the double* buffer before calling
+   * forward_in_place(), and read results after backward_in_place().
+   *
+   * @return Device pointer to the internal buffer as double*, or nullptr
+   *         if the backend does not manage its own buffer.
+   */
+  double* get_real_buffer() {
+    if constexpr (Backend::handles_distributed) {
+      return backend_.get_real_buffer();
+    } else {
+      return nullptr;
+    }
+  }
+
+  /**
+   * @brief Get the backend-managed buffer as complex pointer.
+   *
+   * @return Device pointer to the internal buffer as Complex*, or nullptr.
+   */
+  Complex* get_buffer() {
+    if constexpr (Backend::handles_distributed) {
+      return backend_.get_buffer();
+    } else {
+      return nullptr;
+    }
   }
 
 private:

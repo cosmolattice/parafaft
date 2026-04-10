@@ -339,6 +339,8 @@ namespace parafaft
 
     /// Always use MPI_Alltoallw with derived types on CPU (efficient)
     static constexpr bool use_alltoallw = true;
+    /// FFTW does not handle distributed MPI communication
+    static constexpr bool handles_distributed = false;
 
     /**
      * @brief 2D strided memory copy.

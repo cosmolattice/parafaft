@@ -146,6 +146,45 @@ namespace parafaft
    *       C2R transforms produce N real values from N/2+1 complex values.
    *       In-place transforms require padded buffers with 2*(N/2+1) doubles per row.
    *
+   * @section distributed Distributed Transform Extension (Optional)
+   *
+   * Backends may optionally handle MPI communication and multi-GPU decomposition
+   * internally (e.g., cuFFTMp with NVSHMEM, rocFFT with MPI). When a backend
+   * sets `handles_distributed = true`, ParaFaFT delegates the entire distributed
+   * transform to the backend instead of managing per-stage FFTs and exchanges.
+   *
+   * @subsection distributed_flag Static Flag
+   * @code
+   * static constexpr bool handles_distributed = false;  // default
+   * @endcode
+   *
+   * When `true`, the backend must additionally provide:
+   * @code
+   * struct DistributedInfo {
+   *   int local_shape[D];    // local input array dimensions
+   *   int global_start[D];   // global offset of local block
+   *   int output_shape[D];   // local output dimensions (may differ for R2C)
+   *   int output_start[D];   // global offset of output block
+   *   int required_size;     // minimum buffer size in elements
+   * };
+   *
+   * void setup_distributed(const int global_shape[D], MPI_Comm comm);
+   * DistributedInfo get_distributed_info() const;
+   *
+   * // Buffer management — backend allocates optimized memory (e.g. NVSHMEM)
+   * Complex* get_buffer();         // device pointer to internal buffer
+   * double* get_real_buffer();     // for R2C: same buffer as double*
+   *
+   * // In-place transforms on internal buffer (zero-copy)
+   * void forward();               // C2C forward
+   * void backward();              // C2C backward
+   * void forward_r2c();           // R2C forward
+   * void backward_c2r();          // C2R backward
+   * @endcode
+   *
+   * @note Distributed backends are typically templated on dimension D and may
+   *       static_assert to restrict supported dimensions (e.g., 2D/3D only).
+   *
    * @section constraints Constraints
    * Backend implementations must be:
    * - Move-constructible (for storage in containers)
@@ -158,6 +197,7 @@ namespace parafaft
 
 #include "./fftw3/fft_backend_fftw.hpp"
 #include "./cufft/fft_backend_cufft.hpp"
+#include "./cufft/fft_backend_cufftmp.hpp"
 #include "./hipfft/fft_backend_hipfft.hpp"
 
 #endif // PARAFAFT_BACKEND_HPP

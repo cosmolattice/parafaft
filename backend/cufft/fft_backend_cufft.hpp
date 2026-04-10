@@ -396,6 +396,8 @@ namespace parafaft
 
     /// Use manual packing by default; opt-in to MPI_Alltoallw via PARAFAFT_GPU_ALLTOALLW
     static constexpr bool use_alltoallw = static_cast<bool>(PARAFAFT_GPU_ALLTOALLW);
+    /// cuFFT does not handle distributed MPI communication (see CuFFTMpBackend)
+    static constexpr bool handles_distributed = false;
 
     /**
      * @brief 2D strided async device memory copy on the backend stream.

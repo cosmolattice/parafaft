@@ -12,6 +12,8 @@ option(PARAFAFT_TEST "Build tests" OFF)
 option(PARAFAFT_BENCHMARK "Build benchmarks" OFF)
 option(PARAFAFT_GPU_ALLTOALLW
        "Use MPI_Alltoallw with derived types for GPU backends" OFF)
+option(PARAFAFT_CUFFTMP
+       "Enable cuFFTMp multi-GPU support (requires NVIDIA HPC SDK + NVSHMEM)" OFF)
 option(PARAFAFT_FFTW_THREADS
        "Use libfftw3_threads for threaded FFTW (preferred)" ON)
 option(PARAFAFT_FFTW_OMP "Use fftw3_omp for OpenMP-based threaded FFTW" ON)
@@ -129,8 +131,22 @@ target_include_directories(parafaft
 
 # Add CUDA dependencies if enabled
 if(PARAFAFT_CUDA AND CMAKE_CUDA_COMPILER)
-  target_link_libraries(parafaft INTERFACE CUDA::cufft CUDA::cudart)
-  target_compile_definitions(parafaft INTERFACE PARAFAFT_CUDA_ENABLED)
+  # cuFFTMp: multi-GPU distributed FFT via NVSHMEM (replaces cuFFT when available)
+  if(PARAFAFT_CUFFTMP)
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/cufftmp.cmake)
+    if(CUFFTMP_FOUND)
+      # cuFFTMp is a superset of cuFFT — link it INSTEAD of CUDA::cufft
+      target_link_libraries(parafaft INTERFACE cufftMp::cufftMp nvshmem::host CUDA::cuda_driver CUDA::cudart)
+      target_compile_definitions(parafaft INTERFACE PARAFAFT_CUDA_ENABLED PARAFAFT_CUFFTMP_ENABLED)
+      message(STATUS "cuFFTMp support enabled (replaces cuFFT)")
+    else()
+      message(FATAL_ERROR "PARAFAFT_CUFFTMP=ON but cuFFTMp/NVSHMEM not found. "
+              "Set CUFFTMP_HOME and NVSHMEM_HOME or install NVIDIA HPC SDK.")
+    endif()
+  else()
+    target_link_libraries(parafaft INTERFACE CUDA::cufft CUDA::cudart)
+    target_compile_definitions(parafaft INTERFACE PARAFAFT_CUDA_ENABLED)
+  endif()
   set_property(TARGET parafaft PROPERTY CUDA_SEPARABLE_COMPILATION ON)
 endif()
 
