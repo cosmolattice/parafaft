@@ -447,36 +447,42 @@ inline void exchange_hybrid(
     geom.requests.push_back(req);
   }
 
-  // P2P reads + self-copy in natural iteration order (p = 0, 1, ...).
+  // Self-copy from local pack buffer (no PCIe traffic, all ranks)
+  {
+    size_t send_byte_off = static_cast<size_t>(geom.send_displs[myrank]) * elem_size;
+    size_t recv_byte_off = static_cast<size_t>(geom.recv_displs[myrank]) * elem_size;
+    backend.memcpy(
+        reinterpret_cast<char *>(recv_into) + recv_byte_off,
+        reinterpret_cast<char *>(pack_buf) + send_byte_off,
+        static_cast<size_t>(geom.send_counts[myrank]) * elem_size);
+  }
+
+  // Two-phase P2P read schedule to avoid PCIe contention.
   //
-  // The iteration order is critical for PCIe performance: rank R hits
-  // self at p=R, so different ranks reach their P2P reads at different
-  // loop positions.  On a single CUDA/HIP stream, the self-copy (fast
-  // local D2D) queued before a P2P read delays that read by ~0.5 ms,
-  // staggering bidirectional PCIe traffic across the shared switch.
-  // Without this stagger, simultaneous reads degrade throughput 10x+.
+  // Simultaneous bidirectional reads between two GPUs on a shared PCIe
+  // switch degrade throughput by 10x+ non-deterministically.  We split
+  // all directed P2P reads into two phases such that no bidirectional
+  // pair (i reads j AND j reads i) appears in the same phase.
   //
-  // For >2 GPUs, backend.sync() between consecutive P2P reads serialises
-  // each rank to one outstanding PCIe transfer at a time, preventing a
-  // single rank from flooding the switch with multiple reads.
-  bool prev_was_p2p = false;
-  for (int p = 0; p < nparts; ++p) {
-    if (p == myrank) {
-      // Self-copy from local pack buffer (no PCIe traffic)
-      size_t send_byte_off = static_cast<size_t>(geom.send_displs[myrank]) * elem_size;
-      size_t recv_byte_off = static_cast<size_t>(geom.recv_displs[myrank]) * elem_size;
-      backend.memcpy(
-          reinterpret_cast<char *>(recv_into) + recv_byte_off,
-          reinterpret_cast<char *>(pack_buf) + send_byte_off,
-          static_cast<size_t>(geom.send_counts[myrank]) * elem_size);
-      prev_was_p2p = false;
-    } else if (peer_enabled[p]) {
-      // Serialise consecutive P2P reads (>2 GPUs): wait for the previous
-      // P2P copy to finish before starting the next one.
-      if (prev_was_p2p) {
-        backend.sync();
-      }
-      // P2P direct GPU-to-GPU copy via IPC-mapped pointer
+  // Assignment rule: for each pair {a,b} with a < b, the reader in
+  // phase 0 is the lower rank when (a+b) is even, the higher rank
+  // when (a+b) is odd.  Phase 1 gets the reverse direction.  This
+  // balances the load: each rank does ceil(npeers/2) reads per phase.
+  //
+  // Cost: 2 sequential phases of ceil((nparts-1)/2) × copy_time each,
+  // plus one sync+barrier between phases.  For N=8 GPUs with 12 ms
+  // per copy this is 2 × 4 × 12 ms = 96 ms, vs 672 ms fully serial.
+  for (int phase = 0; phase < 2; ++phase) {
+    for (int p = 0; p < nparts; ++p) {
+      if (p == myrank || !peer_enabled[p]) continue;
+      int lo = (myrank < p) ? myrank : p;
+      int hi = (myrank < p) ? p : myrank;
+      // Lower rank reads first when (lo+hi) is even; higher reads first
+      // when odd.  XOR with phase to swap directions in phase 1.
+      bool lower_reads = (((lo + hi) % 2 == 0) != (phase == 1));
+      bool i_read = (myrank == lo) ? lower_reads : !lower_reads;
+      if (!i_read) continue;
+
       size_t recv_byte_off = static_cast<size_t>(geom.recv_displs[p]) * elem_size;
       size_t remote_off = static_cast<size_t>(geom.send_displs[myrank]) * elem_size;
       char *remote_buf = reinterpret_cast<char *>(remote_pack_ptrs[p]);
@@ -484,7 +490,13 @@ inline void exchange_hybrid(
           reinterpret_cast<char *>(recv_into) + recv_byte_off,
           remote_buf + remote_off,
           static_cast<size_t>(geom.recv_counts[p]) * elem_size);
-      prev_was_p2p = true;
+    }
+    // Sync + barrier between phases so phase-0 reads complete before
+    // phase-1 reads begin (avoids bidirectional traffic on the switch).
+    // After the last phase the outer sync + barrier handles completion.
+    if (phase == 0) {
+      backend.sync();
+      MPI_Barrier(comm);
     }
   }
 
