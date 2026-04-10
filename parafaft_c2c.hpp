@@ -19,8 +19,9 @@
 //
 // ============================================================================
 
-#include "./backend/fft_backend.hpp"
+#include "./parafaft_common.hpp"
 #include <algorithm>
+#include <array>
 #include <complex>
 #include <cstring>
 #include <iostream>
@@ -30,294 +31,9 @@
 #include <vector>
 
 namespace parafaft {
-// ============================================================================
-// Utility Functions
-// ============================================================================
-
-/**
- * @brief Balanced block-contiguous decomposition using Barry Smith's formula.
- *
- * Distributes N elements across M processors ensuring load balance:
- * processors either get q or q+1 elements where q = N/M.
- *
- * Reference: Paper Equation (9) on page 140
- *
- * @param N Total number of elements to distribute
- * @param M Number of processors
- * @param p Processor rank (0 <= p < M)
- * @param[out] n Number of elements assigned to processor p
- * @param[out] s Starting index for processor p in global array
- */
-inline void decompose(int N, int M, int p, int &n, int &s) {
-  int q = N / M; // Base number of elements per processor
-  int r = N % M; // Remainder elements to distribute
-
-  // Processors 0..r-1 get q+1 elements, processors r..M-1 get q elements
-  n = (r > p) ? (q + 1) : q;
-  s = (r > p) ? (n * p) : (q * p + r);
-}
-
-/**
- * @brief Create MPI subarray datatypes for partitioning along an axis.
- *
- * Creates MPI subarray datatypes that describe how to partition a D-dimensional
- * array along a specific axis. This is the key to avoiding local transposes by
- * letting MPI handle the complex index mapping during redistribution.
- *
- * Reference: Paper Section 2.3 and Algorithm 1
- *
- * Traditional methods require:
- *   1. Local transpose to make data contiguous
- *   2. MPI_Alltoall with contiguous buffers
- *   3. Local transpose again
- *
- * This method (Algorithm 1):
- *   1. Create MPI_Type_create_subarray describing discontiguous layout
- *   2. MPI_Alltoallw handles the complexity in MPI layer
- *   3. NO local transposes needed!
- *
- * @param datatype Base MPI datatype (e.g., MPI_C_DOUBLE_COMPLEX)
- * @param ndims Number of dimensions
- * @param sizes Size of the array in each dimension
- * @param axis Axis along which to partition
- * @param nparts Number of partitions (typically number of processors)
- * @param[out] subarrays Array of nparts MPI datatypes (must be pre-allocated)
- */
-inline void subarray(MPI_Datatype datatype, int ndims, const int sizes[],
-                     int axis, int nparts, MPI_Datatype subarrays[]) {
-  // Use a fixed-size stack buffer for subsizes/substarts
-  std::vector<int> subsizes(ndims), substarts(ndims);
-
-  // Initialize: full size in all dimensions, starting at origin
-  for (int i = 0; i < ndims; i++) {
-    subsizes[i] = sizes[i];
-    substarts[i] = 0;
-  }
-
-  // Create one subarray datatype for each partition
-  for (int p = 0; p < nparts; p++) {
-    int n, s;
-    decompose(sizes[axis], nparts, p, n, s); // Use Equation (9)
-    subsizes[axis] = n;                      // Size of partition p along axis
-    substarts[axis] = s;                     // Starting position of partition p
-
-    // MPI_Type_create_subarray describes the discontiguous memory layout
-    // This is the key innovation - no need to pack/unpack data manually
-    MPI_Type_create_subarray(ndims, sizes, subsizes.data(), substarts.data(),
-                             MPI_ORDER_C, datatype, &subarrays[p]);
-    MPI_Type_commit(&subarrays[p]);
-  }
-}
-
-/**
- * @brief Global data redistribution using MPI_Alltoallw with pre-cached
- * datatypes.
- *
- * Redistributes data between two pencil decomposition stages, changing which
- * axis is local vs distributed without any local transposes.
- *
- * Reference: Paper Algorithm 1 and Section 2.3
- *
- * This implements the "global redistribution" step between FFT stages.
- * MPI_Alltoallw with subarray datatypes handles the complex index mapping
- * automatically. No manual packing/unpacking!
- *
- * @param comm MPI subcommunicator for the redistribution
- * @param nparts Number of partitions in the subcommunicator
- * @param arrayA Input array (distributed along axisA)
- * @param subarraysA Pre-created send subarray datatypes
- * @param[out] arrayB Output array (will be distributed along axisB)
- * @param subarraysB Pre-created receive subarray datatypes
- * @param counts Pre-allocated counts array (all 1s, size nparts)
- * @param displs Pre-allocated displacements array (all 0s, size nparts)
- */
-inline void exchange(MPI_Comm comm, int nparts, void *arrayA,
-                     const MPI_Datatype subarraysA[], void *arrayB,
-                     const MPI_Datatype subarraysB[], const int counts[],
-                     const int displs[]) {
-  // This is THE key operation (Paper Algorithm 1, line 7):
-  // All-to-all exchange using derived datatypes
-  // Handles all the complex index calculations internally
-  MPI_Alltoallw(arrayA, counts, displs, subarraysA, arrayB, counts, displs,
-                subarraysB, comm);
-}
-
-/**
- * @brief Packed exchange: manual pack → MPI_Alltoallv → unpack.
- *
- * Replaces MPI_Alltoallw with derived subarray types by explicitly packing
- * non-contiguous data into contiguous GPU buffers, using MPI_Alltoallv
- * (which supports GPU-direct for contiguous data), then unpacking.
- *
- * This avoids the slow host-staging fallback that most GPU-aware MPI
- * implementations use for non-contiguous derived datatypes on device memory.
- *
- * Memory optimization: MPI receives into src_array (whose original data was
- * already packed out), so only one extra buffer (pack_buf) is needed.
- *
- * @tparam BackendT FFT backend type (must provide memcpy2d)
- * @param comm MPI subcommunicator for the redistribution
- * @param nparts Number of partitions in the subcommunicator
- * @param ndims Number of array dimensions
- * @param src_array Source array (data to send, will be overwritten with
- *                  received packed data as temporary storage)
- * @param src_sizes Full array dimensions at the source stage
- * @param src_axis Axis along which source data is partitioned for sending
- * @param dst_array Destination array (will contain unpacked received data)
- * @param dst_sizes Full array dimensions at the destination stage
- * @param dst_axis Axis along which destination data is partitioned for
- *                 receiving
- * @param pack_buf Temporary buffer for packing (size >= total elements)
- */
-template <typename BackendT>
-inline void exchange_packed(
-    const BackendT &backend,
-    MPI_Comm comm, int nparts, int ndims,
-    typename BackendT::Complex *src_array, const int src_sizes[], int src_axis,
-    typename BackendT::Complex *dst_array, const int dst_sizes[], int dst_axis,
-    typename BackendT::Complex *pack_buf)
-{
-  using Complex = typename BackendT::Complex;
-  size_t elem_size = sizeof(Complex);
-
-  // Compute send-side geometry
-  size_t src_leading = 1, src_trailing = 1;
-  for (int i = 0; i < src_axis; ++i) src_leading *= src_sizes[i];
-  for (int i = src_axis + 1; i < ndims; ++i) src_trailing *= src_sizes[i];
-
-  // Compute recv-side geometry
-  size_t dst_leading = 1, dst_trailing = 1;
-  for (int i = 0; i < dst_axis; ++i) dst_leading *= dst_sizes[i];
-  for (int i = dst_axis + 1; i < ndims; ++i) dst_trailing *= dst_sizes[i];
-
-  // When leading == 1, the partition axis is the slowest-varying and each
-  // partition is already a single contiguous block in memory — identical to
-  // the packed layout. We can skip the pack or unpack step entirely.
-  bool src_contiguous = (src_leading == 1);
-  bool dst_contiguous = (dst_leading == 1);
-
-  std::vector<int> send_counts(nparts), send_displs(nparts);
-  std::vector<int> recv_counts(nparts), recv_displs(nparts);
-
-  // Compute send counts/displacements
-  size_t send_offset = 0;
-  for (int p = 0; p < nparts; ++p) {
-    int n, s;
-    decompose(src_sizes[src_axis], nparts, p, n, s);
-    size_t count = src_leading * n * src_trailing;
-    send_counts[p] = static_cast<int>(count);
-    send_displs[p] = static_cast<int>(send_offset);
-    send_offset += count;
-  }
-
-  // Compute recv counts/displacements
-  size_t recv_offset = 0;
-  for (int p = 0; p < nparts; ++p) {
-    int n, s;
-    decompose(dst_sizes[dst_axis], nparts, p, n, s);
-    size_t count = dst_leading * n * dst_trailing;
-    recv_counts[p] = static_cast<int>(count);
-    recv_displs[p] = static_cast<int>(recv_offset);
-    recv_offset += count;
-  }
-
-  // Pack src_array into pack_buf (skip when src is already contiguous)
-  // Pack is async on the backend stream, ordered after any preceding FFT.
-  if (!src_contiguous) {
-    for (int p = 0; p < nparts; ++p) {
-      int n, s;
-      decompose(src_sizes[src_axis], nparts, p, n, s);
-      size_t row_bytes = static_cast<size_t>(n) * src_trailing * elem_size;
-      backend.memcpy2d(
-          reinterpret_cast<char *>(pack_buf) + static_cast<size_t>(send_displs[p]) * elem_size,
-          row_bytes,
-          reinterpret_cast<char *>(src_array) + static_cast<size_t>(s) * src_trailing * elem_size,
-          static_cast<size_t>(src_sizes[src_axis]) * src_trailing * elem_size,
-          row_bytes,
-          src_leading);
-    }
-  }
-
-  // Choose send/recv buffer pointers:
-  //   send_from: pack_buf if we packed, src_array if src is contiguous
-  //   recv_into: dst_array if dst is contiguous, pack_buf if src was
-  //              contiguous (pack_buf is free), src_array otherwise
-  //              (src_array is free after packing)
-  Complex *send_from = src_contiguous ? src_array : pack_buf;
-  Complex *recv_into;
-  if (dst_contiguous) {
-    recv_into = dst_array;
-  } else if (src_contiguous) {
-    recv_into = pack_buf; // pack_buf unused since we skipped packing
-  } else {
-    recv_into = src_array; // src_array free since we packed its data out
-  }
-
-  // Sync stream: ensure all async pack/FFT operations are committed
-  // before MPI reads from the buffer (MPI is not stream-aware).
-  backend.sync();
-
-  // Non-blocking MPI: post receives first, then sends, overlap self-copy
-  // with network transfers. Uses point-to-point (not collectives) because
-  // collective accelerators (e.g. HCOLL) may not support GPU device pointers.
-  int myrank;
-  MPI_Comm_rank(comm, &myrank);
-  std::vector<MPI_Request> requests;
-  requests.reserve(2 * (nparts - 1));
-
-  for (int p = 0; p < nparts; ++p) {
-    if (p == myrank) continue;
-    size_t recv_byte_off = static_cast<size_t>(recv_displs[p]) * elem_size;
-    MPI_Request req;
-    MPI_Irecv(reinterpret_cast<char *>(recv_into) + recv_byte_off,
-              recv_counts[p], MPI_C_DOUBLE_COMPLEX, p, 0, comm, &req);
-    requests.push_back(req);
-  }
-  for (int p = 0; p < nparts; ++p) {
-    if (p == myrank) continue;
-    size_t send_byte_off = static_cast<size_t>(send_displs[p]) * elem_size;
-    MPI_Request req;
-    MPI_Isend(reinterpret_cast<char *>(send_from) + send_byte_off,
-              send_counts[p], MPI_C_DOUBLE_COMPLEX, p, 0, comm, &req);
-    requests.push_back(req);
-  }
-
-  // Self-copy: async on GPU stream, overlaps with network transfers
-  {
-    size_t send_byte_off = static_cast<size_t>(send_displs[myrank]) * elem_size;
-    size_t recv_byte_off = static_cast<size_t>(recv_displs[myrank]) * elem_size;
-    backend.memcpy(
-        reinterpret_cast<char *>(recv_into) + recv_byte_off,
-        reinterpret_cast<char *>(send_from) + send_byte_off,
-        static_cast<size_t>(send_counts[myrank]) * elem_size);
-  }
-
-  // Wait for all remote transfers to complete
-  if (!requests.empty()) {
-    MPI_Waitall(static_cast<int>(requests.size()), requests.data(),
-                MPI_STATUSES_IGNORE);
-  }
-
-  // Unpack recv_into into dst_array (skip when dst is already contiguous)
-  // Async on stream, enqueued after MPI_Waitall guarantees data is valid.
-  if (!dst_contiguous) {
-    for (int p = 0; p < nparts; ++p) {
-      int n, s;
-      decompose(dst_sizes[dst_axis], nparts, p, n, s);
-      size_t row_bytes = static_cast<size_t>(n) * dst_trailing * elem_size;
-      backend.memcpy2d(
-          reinterpret_cast<char *>(dst_array) + static_cast<size_t>(s) * dst_trailing * elem_size,
-          static_cast<size_t>(dst_sizes[dst_axis]) * dst_trailing * elem_size,
-          reinterpret_cast<char *>(recv_into) + static_cast<size_t>(recv_displs[p]) * elem_size,
-          row_bytes,
-          row_bytes,
-          dst_leading);
-    }
-  }
-}
 
 // ============================================================================
-// ParaFaFT Class
+// ParaFaFT_C2C Class
 // ============================================================================
 
 /**
@@ -349,7 +65,7 @@ inline void exchange_packed(
  * @tparam D Number of dimensions (must be >= 2)
  * @tparam Backend FFT backend type (default: FFTWBackend)
  */
-template <int D, typename Backend = FFTWBackend> class ParaFaFT {
+template <int D, typename Backend = FFTWBackend> class ParaFaFT_C2C {
 public:
   using Complex = typename Backend::Complex;
   using Buffer = typename Backend::Buffer;
@@ -375,7 +91,7 @@ public:
    *                  Patient for faster FFT execution at the cost of longer
    *                  initialization. Only affects the FFTW backend.
    */
-  ParaFaFT(const int global_shape[D], MPI_Comm comm = MPI_COMM_WORLD,
+  ParaFaFT_C2C(const int global_shape[D], MPI_Comm comm = MPI_COMM_WORLD,
            FFTPlanFlag plan_flag = FFTPlanFlag::Estimate)
       : comm_world_(comm), backend_(D, comm, plan_flag) {
     MPI_Comm_rank(comm_world_, &rank_);
@@ -469,6 +185,9 @@ public:
 
     // Create FFT plans for all stages
     create_backend_plans();
+
+    // Set up P2P IPC for same-node GPU exchanges
+    setup_p2p();
   }
 
   /**
@@ -526,7 +245,18 @@ public:
    * @brief Destructor. Frees MPI communicators and cached datatypes if MPI is
    * not finalized.
    */
-  ~ParaFaFT() {
+  ~ParaFaFT_C2C() {
+    // Close IPC handles before pack_buffer_ is freed
+    if constexpr (Backend::use_p2p) {
+      for (auto &info : p2p_info_) {
+        if (!info.enabled) continue;
+        for (auto *ptr : info.remote_pack_ptrs) {
+          if (ptr && ptr != pack_buffer_.data())
+            Backend::ipc_close_handle(ptr);
+        }
+      }
+    }
+
     int finalized;
     MPI_Finalized(&finalized);
     if (!finalized) {
@@ -736,6 +466,13 @@ public:
                    fwd_send_types_[stage].data(), dst,
                    fwd_recv_types_[stage].data(), exchange_counts_.data(),
                    exchange_displs_.data());
+        } else if (p2p_info_[stage].enabled) {
+          exchange_p2p<Backend>(
+              backend_, subcomms_[next_axis], nparts_[stage], D,
+              src, stage_shapes_[stage].data(), D - 1 - stage,
+              dst, stage_shapes_[stage + 1].data(), D - 2 - stage,
+              pack_buffer_.data(),
+              p2p_info_[stage].remote_pack_ptrs.data());
         } else {
           exchange_packed<Backend>(
               backend_, subcomms_[next_axis], nparts_[stage], D,
@@ -816,6 +553,13 @@ public:
                    fwd_recv_types_[trans].data(), dst,
                    fwd_send_types_[trans].data(), exchange_counts_.data(),
                    exchange_displs_.data());
+        } else if (p2p_info_[trans].enabled) {
+          exchange_p2p<Backend>(
+              backend_, subcomms_[comm_idx], nparts_[trans], D,
+              src, stage_shapes_[trans + 1].data(), D - 2 - trans,
+              dst, stage_shapes_[trans].data(), D - 1 - trans,
+              pack_buffer_.data(),
+              p2p_info_[trans].remote_pack_ptrs.data());
         } else {
           // Backward reverses forward: send from stage_shapes_[trans+1]
           // along D-2-trans, recv into stage_shapes_[trans] along D-1-trans
@@ -1011,6 +755,69 @@ private:
     }
   }
 
+  /**
+   * @brief Set up CUDA/HIP IPC for P2P GPU-to-GPU exchange.
+   *
+   * For each subcommunicator, checks if all ranks are on same-node GPUs with
+   * P2P access. If so, exports pack_buffer_ via IPC and opens remote handles,
+   * enabling direct GPU-to-GPU copies that bypass MPI.
+   */
+  void setup_p2p() {
+    if constexpr (Backend::use_p2p) {
+      p2p_info_.resize(D - 1);
+      int my_device = Backend::device_id();
+
+      for (int t = 0; t < D - 1; ++t) {
+        int nparts = nparts_[t];
+        if (nparts <= 1) continue;
+
+        MPI_Comm comm = subcomms_[D - 2 - t];
+
+        // Gather device IDs in this subcommunicator
+        std::vector<int> devices(nparts);
+        MPI_Allgather(&my_device, 1, MPI_INT,
+                      devices.data(), 1, MPI_INT, comm);
+
+        // Check P2P for all pairs
+        bool all_p2p = true;
+        for (int p = 0; p < nparts && all_p2p; ++p) {
+          if (devices[p] == my_device) continue;
+          if (!Backend::can_access_peer(my_device, devices[p]))
+            all_p2p = false;
+        }
+        if (!all_p2p) continue;
+
+        // Enable peer access
+        for (int p = 0; p < nparts; ++p) {
+          if (devices[p] != my_device)
+            Backend::enable_peer_access(devices[p]);
+        }
+
+        // Exchange IPC handles for pack_buffer_
+        using Handle = std::array<char, Backend::ipc_handle_size>;
+        Handle my_handle{};
+        Backend::ipc_get_handle(pack_buffer_.data(), my_handle.data());
+        std::vector<Handle> handles(nparts);
+        MPI_Allgather(my_handle.data(), sizeof(Handle), MPI_BYTE,
+                      handles.data(), sizeof(Handle), MPI_BYTE, comm);
+
+        // Open remote handles
+        int my_subrank;
+        MPI_Comm_rank(comm, &my_subrank);
+        p2p_info_[t].enabled = true;
+        p2p_info_[t].remote_pack_ptrs.resize(nparts, nullptr);
+        for (int p = 0; p < nparts; ++p) {
+          if (p == my_subrank) {
+            p2p_info_[t].remote_pack_ptrs[p] = pack_buffer_.data();
+          } else {
+            p2p_info_[t].remote_pack_ptrs[p] =
+                Backend::ipc_open_handle(handles[p].data());
+          }
+        }
+      }
+    }
+  }
+
   // =========================================================================
   // Member Variables
   // =========================================================================
@@ -1046,6 +853,13 @@ private:
   std::vector<int> exchange_counts_;
   /// Pre-allocated displacements array for MPI_Alltoallw (all 0s)
   std::vector<int> exchange_displs_;
+
+  /// Per-subcommunicator P2P exchange info (GPU backends only)
+  struct P2PInfo {
+    bool enabled = false;
+    std::vector<void *> remote_pack_ptrs;
+  };
+  std::vector<P2PInfo> p2p_info_;
 
   Backend backend_; ///< FFT backend (stateful, stores pre-created plans)
 };

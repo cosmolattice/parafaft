@@ -48,7 +48,7 @@ template <int D> int compare_fftwBackend(const int N, int rank, int shape_id) {
   // ---- ParaFaFT setup -------------------------------------------------------
   std::array<int, D> global_shape;
   global_shape.fill(N);
-  parafaft::ParaFaFT<D, parafaft::FFTWBackend> fft(global_shape.data());
+  parafaft::ParaFaFT_C2C<D, parafaft::FFTWBackend> fft(global_shape.data());
 
   int local_size = fft.get_local_size();
   int buffer_size = fft.get_required_output_size();

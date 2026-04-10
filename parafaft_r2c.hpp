@@ -60,8 +60,7 @@
 //
 // ============================================================================
 
-#include "./backend/fft_backend.hpp"
-#include "./parafaft_c2c.hpp"
+#include "./parafaft_common.hpp"
 #include <algorithm>
 #include <complex>
 #include <cstring>
@@ -72,8 +71,6 @@
 #include <vector>
 
 namespace parafaft {
-// Utility functions (decompose, subarray, exchange) are defined in
-// parafaft_c2c.hpp and reused here to avoid code duplication.
 
 // ============================================================================
 // ParaFaFT_R2C Class
@@ -201,6 +198,9 @@ public:
 
     // Create FFT plans
     create_backend_plans();
+
+    // Set up P2P IPC for same-node GPU exchanges
+    setup_p2p();
   }
 
   /**
@@ -208,6 +208,17 @@ public:
    * not finalized.
    */
   ~ParaFaFT_R2C() {
+    // Close IPC handles before pack_buffer_ is freed
+    if constexpr (Backend::use_p2p) {
+      for (auto &info : p2p_info_) {
+        if (!info.enabled) continue;
+        for (auto *ptr : info.remote_pack_ptrs) {
+          if (ptr && ptr != pack_buffer_.data())
+            Backend::ipc_close_handle(ptr);
+        }
+      }
+    }
+
     int finalized;
     MPI_Finalized(&finalized);
     if (!finalized) {
@@ -321,6 +332,13 @@ public:
                  fwd_send_types_[trans].data(), dst,
                  fwd_recv_types_[trans].data(), exchange_counts_.data(),
                  exchange_displs_.data());
+      } else if (p2p_info_[trans].enabled) {
+        exchange_p2p<Backend>(backend_, subcomms_[axis], nparts_[trans], D,
+                               src, stage_output_shapes_[trans].data(),
+                               D - 1 - trans, dst,
+                               stage_shapes_[trans + 1].data(), D - 2 - trans,
+                               pack_buffer_.data(),
+                               p2p_info_[trans].remote_pack_ptrs.data());
       } else {
         exchange_packed<Backend>(backend_, subcomms_[axis], nparts_[trans], D,
                                  src, stage_output_shapes_[trans].data(),
@@ -423,6 +441,13 @@ public:
                  fwd_recv_types_[trans].data(), dst,
                  fwd_send_types_[trans].data(), exchange_counts_.data(),
                  exchange_displs_.data());
+      } else if (p2p_info_[trans].enabled) {
+        exchange_p2p<Backend>(backend_, subcomms_[axis], nparts_[trans], D,
+                               src, stage_shapes_[trans + 1].data(),
+                               D - 2 - trans, dst,
+                               stage_output_shapes_[trans].data(),
+                               D - 1 - trans, pack_buffer_.data(),
+                               p2p_info_[trans].remote_pack_ptrs.data());
       } else {
         exchange_packed<Backend>(backend_, subcomms_[axis], nparts_[trans], D,
                                  src, stage_shapes_[trans + 1].data(),
@@ -720,6 +745,60 @@ private:
   }
 
   /**
+   * @brief Set up CUDA/HIP IPC for P2P GPU-to-GPU exchange.
+   */
+  void setup_p2p() {
+    if constexpr (Backend::use_p2p) {
+      p2p_info_.resize(D - 1);
+      int my_device = Backend::device_id();
+
+      for (int t = 0; t < D - 1; ++t) {
+        int nparts = nparts_[t];
+        if (nparts <= 1) continue;
+
+        MPI_Comm comm = subcomms_[D - 2 - t];
+
+        std::vector<int> devices(nparts);
+        MPI_Allgather(&my_device, 1, MPI_INT,
+                      devices.data(), 1, MPI_INT, comm);
+
+        bool all_p2p = true;
+        for (int p = 0; p < nparts && all_p2p; ++p) {
+          if (devices[p] == my_device) continue;
+          if (!Backend::can_access_peer(my_device, devices[p]))
+            all_p2p = false;
+        }
+        if (!all_p2p) continue;
+
+        for (int p = 0; p < nparts; ++p) {
+          if (devices[p] != my_device)
+            Backend::enable_peer_access(devices[p]);
+        }
+
+        using Handle = std::array<char, Backend::ipc_handle_size>;
+        Handle my_handle{};
+        Backend::ipc_get_handle(pack_buffer_.data(), my_handle.data());
+        std::vector<Handle> handles(nparts);
+        MPI_Allgather(my_handle.data(), sizeof(Handle), MPI_BYTE,
+                      handles.data(), sizeof(Handle), MPI_BYTE, comm);
+
+        int my_subrank;
+        MPI_Comm_rank(comm, &my_subrank);
+        p2p_info_[t].enabled = true;
+        p2p_info_[t].remote_pack_ptrs.resize(nparts, nullptr);
+        for (int p = 0; p < nparts; ++p) {
+          if (p == my_subrank) {
+            p2p_info_[t].remote_pack_ptrs[p] = pack_buffer_.data();
+          } else {
+            p2p_info_[t].remote_pack_ptrs[p] =
+                Backend::ipc_open_handle(handles[p].data());
+          }
+        }
+      }
+    }
+  }
+
+  /**
    * @brief Initialize stage shapes for the pencil decomposition.
    *
    * Computes local array shapes for each stage of the FFT pipeline,
@@ -939,6 +1018,13 @@ private:
   ComplexBuffer scratch_b_;   ///< Ping-pong buffer for intermediate stages
   ComplexBuffer pack_buffer_; ///< Pack buffer for contiguous MPI exchange (GPU
                               ///< backends only)
+
+  /// Per-subcommunicator P2P exchange info (GPU backends only)
+  struct P2PInfo {
+    bool enabled = false;
+    std::vector<void *> remote_pack_ptrs;
+  };
+  std::vector<P2PInfo> p2p_info_;
 
   Backend backend_; ///< FFT backend (FFTW, cuFFT, etc.)
 };

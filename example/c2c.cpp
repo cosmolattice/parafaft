@@ -5,7 +5,7 @@ int main(int argc, char **argv) {
 
   // Works for any dimension!
   const int global_shape[3] = {32, 32, 32};
-  parafaft::ParaFaFT<3> fft(global_shape);
+  parafaft::ParaFaFT_C2C<3> fft(global_shape);
 
   // Allocate local data (use get_required_output_size for sufficient space)
   const int local_size = fft.get_local_size();

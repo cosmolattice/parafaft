@@ -410,6 +410,54 @@ namespace parafaft
       check_hip(hipStreamSynchronize(stream_), "hipStreamSynchronize");
     }
 
+    // ========== P2P / IPC Methods ==========
+
+    static constexpr bool use_p2p = true;
+
+    static int device_id()
+    {
+      int dev;
+      check_hip(hipGetDevice(&dev), "hipGetDevice");
+      return dev;
+    }
+
+    static bool can_access_peer(int src_dev, int dst_dev)
+    {
+      int can = 0;
+      hipDeviceCanAccessPeer(&can, src_dev, dst_dev);
+      return can != 0;
+    }
+
+    static void enable_peer_access(int peer_dev)
+    {
+      hipError_t err = hipDeviceEnablePeerAccess(peer_dev, 0);
+      if (err != hipSuccess && err != hipErrorPeerAccessAlreadyEnabled)
+        check_hip(err, "hipDeviceEnablePeerAccess");
+    }
+
+    static constexpr size_t ipc_handle_size = sizeof(hipIpcMemHandle_t);
+
+    static void ipc_get_handle(void *devptr, void *handle)
+    {
+      check_hip(hipIpcGetMemHandle(
+          reinterpret_cast<hipIpcMemHandle_t *>(handle), devptr),
+          "hipIpcGetMemHandle");
+    }
+
+    static void *ipc_open_handle(const void *handle)
+    {
+      void *ptr;
+      check_hip(hipIpcOpenMemHandle(
+          &ptr, *reinterpret_cast<const hipIpcMemHandle_t *>(handle),
+          hipIpcMemLazyEnablePeerAccess), "hipIpcOpenMemHandle");
+      return ptr;
+    }
+
+    static void ipc_close_handle(void *ptr)
+    {
+      hipIpcCloseMemHandle(ptr);
+    }
+
   private:
     int num_stages_; ///< Number of FFT stages
 

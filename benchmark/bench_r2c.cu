@@ -181,6 +181,17 @@ int main(int argc, char **argv) {
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &mpi_size);
 
+  // Set GPU device based on node-local rank
+  MPI_Comm local_comm;
+  MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, rank,
+                      MPI_INFO_NULL, &local_comm);
+  int local_rank;
+  MPI_Comm_rank(local_comm, &local_rank);
+  int num_devices;
+  cudaGetDeviceCount(&num_devices);
+  cudaSetDevice(local_rank % num_devices);
+  MPI_Comm_free(&local_comm);
+
   int N = 32;
   int D = 3;
   int iterations = 50;

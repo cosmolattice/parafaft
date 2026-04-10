@@ -266,6 +266,9 @@ namespace parafaft
     /// No-op: CPU operations are synchronous
     void sync() const {}
 
+    /// No P2P on CPU
+    static constexpr bool use_p2p = false;
+
     /**
      * @brief Destructor. Cleans up all FFTW plans.
      */

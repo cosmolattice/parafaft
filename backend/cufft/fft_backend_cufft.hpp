@@ -416,6 +416,54 @@ namespace parafaft
       check_cuda(cudaStreamSynchronize(stream_), "cudaStreamSynchronize");
     }
 
+    // ========== P2P / IPC Methods ==========
+
+    static constexpr bool use_p2p = true;
+
+    static int device_id()
+    {
+      int dev;
+      check_cuda(cudaGetDevice(&dev), "cudaGetDevice");
+      return dev;
+    }
+
+    static bool can_access_peer(int src_dev, int dst_dev)
+    {
+      int can = 0;
+      cudaDeviceCanAccessPeer(&can, src_dev, dst_dev);
+      return can != 0;
+    }
+
+    static void enable_peer_access(int peer_dev)
+    {
+      cudaError_t err = cudaDeviceEnablePeerAccess(peer_dev, 0);
+      if (err != cudaSuccess && err != cudaErrorPeerAccessAlreadyEnabled)
+        check_cuda(err, "cudaDeviceEnablePeerAccess");
+    }
+
+    static constexpr size_t ipc_handle_size = sizeof(cudaIpcMemHandle_t);
+
+    static void ipc_get_handle(void *devptr, void *handle)
+    {
+      check_cuda(cudaIpcGetMemHandle(
+          reinterpret_cast<cudaIpcMemHandle_t *>(handle), devptr),
+          "cudaIpcGetMemHandle");
+    }
+
+    static void *ipc_open_handle(const void *handle)
+    {
+      void *ptr;
+      check_cuda(cudaIpcOpenMemHandle(
+          &ptr, *reinterpret_cast<const cudaIpcMemHandle_t *>(handle),
+          cudaIpcMemLazyEnablePeerAccess), "cudaIpcOpenMemHandle");
+      return ptr;
+    }
+
+    static void ipc_close_handle(void *ptr)
+    {
+      cudaIpcCloseMemHandle(ptr);
+    }
+
   private:
     int num_stages_; ///< Number of FFT stages
 

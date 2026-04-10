@@ -105,7 +105,7 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
   Statistics parafaft_stats;
 
   {
-    parafaft::ParaFaFT<D, parafaft::CuFFTBackend> fft(global_shape.data());
+    parafaft::ParaFaFT_C2C<D, parafaft::CuFFTBackend> fft(global_shape.data());
 
     int local_size = fft.get_local_size();
     int buffer_size = fft.get_required_output_size();
@@ -186,6 +186,17 @@ int main(int argc, char **argv) {
   int rank, mpi_size;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &mpi_size);
+
+  // Set GPU device based on node-local rank
+  MPI_Comm local_comm;
+  MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, rank,
+                      MPI_INFO_NULL, &local_comm);
+  int local_rank;
+  MPI_Comm_rank(local_comm, &local_rank);
+  int num_devices;
+  cudaGetDeviceCount(&num_devices);
+  cudaSetDevice(local_rank % num_devices);
+  MPI_Comm_free(&local_comm);
 
   int N = 32;
   int D = 3;
