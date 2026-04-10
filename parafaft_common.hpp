@@ -447,32 +447,33 @@ inline void exchange_hybrid(
     geom.requests.push_back(req);
   }
 
-  // Round-robin P2P schedule: p = (myrank + step) % nparts.
-  // Step 0 is always self-copy (local D2D, zero PCIe traffic).  Subsequent
-  // steps form a ring pattern where each source GPU is read by exactly one
-  // peer per step, avoiding PCIe switch saturation from multiple ranks
-  // reading the same source simultaneously.
+  // P2P reads + self-copy in natural iteration order (p = 0, 1, ...).
   //
-  // backend.sync() between P2P reads (step > 1) serialises each rank's
-  // outstanding reads to at most one at a time.  The sync is skipped for
-  // the first P2P read (step 1) so that on 2-GPU systems the GPU stream's
-  // natural ordering — self-copy before the P2P read — provides a timing
-  // stagger that avoids simultaneous bidirectional PCIe traffic.
-  for (int step = 0; step < nparts; ++step) {
-    int p = (myrank + step) % nparts;
-
+  // The iteration order is critical for PCIe performance: rank R hits
+  // self at p=R, so different ranks reach their P2P reads at different
+  // loop positions.  On a single CUDA/HIP stream, the self-copy (fast
+  // local D2D) queued before a P2P read delays that read by ~0.5 ms,
+  // staggering bidirectional PCIe traffic across the shared switch.
+  // Without this stagger, simultaneous reads degrade throughput 10x+.
+  //
+  // For >2 GPUs, backend.sync() between consecutive P2P reads serialises
+  // each rank to one outstanding PCIe transfer at a time, preventing a
+  // single rank from flooding the switch with multiple reads.
+  bool prev_was_p2p = false;
+  for (int p = 0; p < nparts; ++p) {
     if (p == myrank) {
-      // Self-copy from local pack buffer (no PCIe, no sync needed)
+      // Self-copy from local pack buffer (no PCIe traffic)
       size_t send_byte_off = static_cast<size_t>(geom.send_displs[myrank]) * elem_size;
       size_t recv_byte_off = static_cast<size_t>(geom.recv_displs[myrank]) * elem_size;
       backend.memcpy(
           reinterpret_cast<char *>(recv_into) + recv_byte_off,
           reinterpret_cast<char *>(pack_buf) + send_byte_off,
           static_cast<size_t>(geom.send_counts[myrank]) * elem_size);
+      prev_was_p2p = false;
     } else if (peer_enabled[p]) {
-      // Serialise: wait for previous P2P copy before issuing the next.
-      // Skipped at step 1 to preserve stream-ordering stagger (see above).
-      if (step > 1) {
+      // Serialise consecutive P2P reads (>2 GPUs): wait for the previous
+      // P2P copy to finish before starting the next one.
+      if (prev_was_p2p) {
         backend.sync();
       }
       // P2P direct GPU-to-GPU copy via IPC-mapped pointer
@@ -483,6 +484,7 @@ inline void exchange_hybrid(
           reinterpret_cast<char *>(recv_into) + recv_byte_off,
           remote_buf + remote_off,
           static_cast<size_t>(geom.recv_counts[p]) * elem_size);
+      prev_was_p2p = true;
     }
   }
 
