@@ -12,6 +12,7 @@ ParaFaFT (**Para**llel **Fa**st **F**ourier **T**ransform) provides a C++ implem
   - `parafaft_c2c.hpp`: Provides through `ParaFaFT<D>`, complex fourier transforms for arbitrary dimensions.
   - `parafaft_r2c.hpp`: Provides through `ParaFaFT_R2C<D>`, real-to-complex and complex-to-real transforms with memory-efficient layouts.
 - **No local transposes**: Uses MPI subarray datatypes with `MPI_Alltoallw` to eliminate local data rearrangements
+- **GPU peer-to-peer exchanges**: On GPU backends, inter-process data redistribution uses CUDA/HIP IPC for same-node GPU peers, falling back to point-to-point MPI for cross-node neighbors — avoiding `MPI_Alltoallw` overhead on GPUs entirely
 - **Supported FFT backends**:
   - **FFTW3**: CPU-based FFT operations (default)
   - **cuFFT**: NVIDIA GPU acceleration via CUDA
@@ -37,7 +38,7 @@ For GPU support, see the [Building with CMake](#building-with-cmake) section bel
 
 - MPI implementation (OpenMPI, MPICH, etc.)
 - FFTW3 library
-- C++14 compatible compiler
+- C++17 compatible compiler
 - CMake 3.19+
 
 optional:
@@ -73,11 +74,17 @@ cmake --install . --prefix /your/install/path
 
 ### CMake Options
 
-| Option          | Default | Description                            |
-| --------------- | ------- | -------------------------------------- |
-| `PARAFAFT_CUDA` | `OFF`   | Enable CUDA/cuFFT backend (NVIDIA GPU) |
-| `PARAFAFT_HIP`  | `OFF`   | Enable HIP/hipFFT backend (AMD GPU)    |
-| `PARAFAFT_TEST` | `OFF`   | Build the test suite                   |
+| Option                  | Default | Description                            |
+| ----------------------- | ------- | -------------------------------------- |
+| `PARAFAFT_CUDA`         | `OFF`   | Enable CUDA/cuFFT backend (NVIDIA GPU) |
+| `PARAFAFT_HIP`          | `OFF`   | Enable HIP/hipFFT backend (AMD GPU)    |
+| `PARAFAFT_TEST`         | `OFF`   | Build the test suite                   |
+| `PARAFAFT_BENCHMARK`    | `OFF`   | Build benchmarks                       |
+| `PARAFAFT_GPU_ALLTOALLW`| `OFF`   | Use `MPI_Alltoallw` with derived types for GPU backends instead of P2P/packed exchanges (requires GPU-aware MPI; slower without it) |
+| `PARAFAFT_FFTW_THREADS` | `ON`    | Use `libfftw3_threads` for POSIX-threaded FFTW (preferred over OpenMP) |
+| `PARAFAFT_FFTW_OMP`     | `ON`    | Use `fftw3_omp` for OpenMP-based threaded FFTW (fallback if threads unavailable) |
+| `PARAFAFT_FFTW_LIB_DIR` |         | Path to FFTW library directory (optional, can also use `CMAKE_PREFIX_PATH`) |
+| `PARAFAFT_FFTW_INCLUDE_DIR` |     | Path to FFTW header directory (optional, can also use `CMAKE_PREFIX_PATH`) |
 
 ### Using in Your CMake Project
 
@@ -220,6 +227,17 @@ For a 3D array on a 2D processor grid:
 
 Total: **3 FFTs** and **2 global redistributions**
 
+### GPU Exchange Strategy
+
+On GPU backends, the default `MPI_Alltoallw`-based redistribution is replaced by a hybrid approach that is determined per-neighbor and per-stage at construction time:
+
+1. **P2P (same-node GPUs)**: At setup, each rank exchanges GPU device IDs with its neighbors. If two GPUs can access each other's memory (checked via `cudaDeviceCanAccessPeer` / `hipDeviceCanAccessPeer`), an IPC handle is opened so that each rank can directly read from the remote rank's packed buffer — no MPI transfer needed.
+2. **MPI point-to-point (cross-node)**: For neighbors without P2P access, `MPI_Isend`/`MPI_Irecv` with device pointers is used (requires GPU-aware MPI).
+
+Both paths are active simultaneously within a single exchange call (`exchange_hybrid`), with P2P direct copies overlapping MPI transfers. When no P2P neighbors exist at all for a stage, a simpler `exchange_packed` path is used that packs data contiguously and communicates entirely via MPI point-to-point.
+
+To force the original `MPI_Alltoallw` path on GPUs, set `-DPARAFAFT_GPU_ALLTOALLW=ON`.
+
 ### R2C/C2R Data Layout
 
 For R2C transforms, the last axis is reduced from N to N/2+1 in complex space due to Hermitian symmetry:
@@ -237,13 +255,17 @@ FFTW3 backend for CPU-based operations, always available.
 cuFFT backend for NVIDIA GPU acceleration:
 - Requires CUDA Toolkit and cuFFT library
 - Includes `cuvector<T>` device memory wrapper
+- Uses CUDA IPC for peer-to-peer exchanges between GPUs on the same node
 - Enable with `-DPARAFAFT_CUDA=ON`
 
 ##### `fft_backend_hipfft.hpp` (AMD GPU)
 hipFFT backend for AMD GPU acceleration:
 - Requires ROCm and hipFFT library
 - Includes `hipvector<T>` device memory wrapper
+- Uses HIP IPC for peer-to-peer exchanges between GPUs on the same node
 - Enable with `-DPARAFAFT_HIP=ON`
+
+> **Note:** GPU backends require GPU-aware MPI for cross-node communication (the MPI fallback path passes device pointers directly to `MPI_Isend`/`MPI_Irecv`).
 
 ## Performance Considerations
 
@@ -263,8 +285,9 @@ From the paper's benchmarks on Cray XC40:
 - R2C transforms save ~50% memory for real data
 
 **Considerations:**
-- `MPI_Alltoallw` may be slower than `MPI_Alltoall` for contiguous data
-- Relies on MPI implementation quality for subarray datatype handling
+- `MPI_Alltoallw` may be slower than `MPI_Alltoall` for contiguous data (CPU path)
+- Relies on MPI implementation quality for subarray datatype handling (CPU path)
+- GPU path requires GPU-aware MPI for cross-node communication
 
 ## References
 [Dalcin, L., Mortensen, M., & Keyes, D. E. (2019). Fast parallel multidimensional FFT using advanced MPI. *Journal of Parallel and Distributed Computing*, 128, 137-150.](https://arxiv.org/abs/1804.09536).
