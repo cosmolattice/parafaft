@@ -312,11 +312,16 @@ inline void exchange_packed(
 }
 
 /**
- * @brief P2P exchange: pack → barrier → direct GPU-to-GPU copy via IPC → unpack.
+ * @brief Hybrid exchange: mixes P2P direct GPU copies with MPI point-to-point.
  *
- * Replaces MPI data transfers with direct GPU-to-GPU copies using CUDA/HIP IPC
- * mapped pointers. Each rank reads its portion from the remote rank's pack
- * buffer. Two MPI_Barrier calls synchronize the pack and read phases.
+ * For neighbours where P2P (IPC) is available, uses direct GPU-to-GPU memory
+ * copies via IPC-mapped pointers. For non-P2P neighbours, falls back to MPI
+ * Isend/Irecv. Two MPI_Barrier calls synchronize the P2P pack/read phases;
+ * MPI transfers overlap with the P2P reads between the barriers.
+ *
+ * When all neighbours are P2P-capable, this degenerates to the pure-P2P path
+ * (no MPI sends/recvs). When none are, this function should not be called —
+ * use exchange_packed() instead.
  *
  * @tparam BackendT FFT backend type
  * @param backend Backend instance for async memcpy
@@ -330,16 +335,18 @@ inline void exchange_packed(
  * @param dst_sizes Destination dimensions
  * @param dst_axis Destination partition axis
  * @param pack_buf Local pack buffer (IPC-exported)
- * @param remote_pack_ptrs IPC-mapped pointers to each rank's pack buffer
+ * @param remote_pack_ptrs IPC-mapped pointers (non-null for P2P neighbours)
+ * @param peer_enabled Per-neighbour flags: nonzero = P2P, zero = MPI
  */
 template <typename BackendT>
-inline void exchange_p2p(
+inline void exchange_hybrid(
     const BackendT &backend,
     MPI_Comm comm, int nparts, int ndims,
     typename BackendT::Complex *src_array, const int src_sizes[], int src_axis,
     typename BackendT::Complex *dst_array, const int dst_sizes[], int dst_axis,
     typename BackendT::Complex *pack_buf,
-    void *const *remote_pack_ptrs)
+    void *const *remote_pack_ptrs,
+    const char *peer_enabled)
 {
   using Complex = typename BackendT::Complex;
   size_t elem_size = sizeof(Complex);
@@ -380,7 +387,8 @@ inline void exchange_p2p(
     recv_offset += count;
   }
 
-  // Always pack into pack_buf (remote IPC handle points here)
+  // Always pack into pack_buf: P2P neighbours read via IPC handle,
+  // MPI neighbours send from pack_buf via Isend.
   for (int p = 0; p < nparts; ++p) {
     int n, s;
     decompose(src_sizes[src_axis], nparts, p, n, s);
@@ -394,21 +402,42 @@ inline void exchange_p2p(
         src_leading);
   }
 
-  // Sync: ensure pack data is committed before remote reads
+  // Sync: ensure pack data is committed before MPI reads or P2P reads
   backend.sync();
 
-  // Barrier: all ranks must finish packing before anyone reads
+  // Barrier: all ranks must finish packing before P2P reads begin
   MPI_Barrier(comm);
 
   // Choose recv buffer
   Complex *recv_into = dst_contiguous ? dst_array : src_array;
 
-  // Direct GPU-to-GPU copy: read my portion from each rank's pack buffer
   int myrank;
   MPI_Comm_rank(comm, &myrank);
+
+  // Post MPI Irecv/Isend for non-P2P neighbours
+  std::vector<MPI_Request> requests;
+  requests.reserve(2 * nparts);
   for (int p = 0; p < nparts; ++p) {
+    if (p == myrank || peer_enabled[p]) continue;
     size_t recv_byte_off = static_cast<size_t>(recv_displs[p]) * elem_size;
-    // Each rank packed data for me at offset send_displs[myrank]
+    MPI_Request req;
+    MPI_Irecv(reinterpret_cast<char *>(recv_into) + recv_byte_off,
+              recv_counts[p], MPI_C_DOUBLE_COMPLEX, p, 0, comm, &req);
+    requests.push_back(req);
+  }
+  for (int p = 0; p < nparts; ++p) {
+    if (p == myrank || peer_enabled[p]) continue;
+    size_t send_byte_off = static_cast<size_t>(send_displs[p]) * elem_size;
+    MPI_Request req;
+    MPI_Isend(reinterpret_cast<char *>(pack_buf) + send_byte_off,
+              send_counts[p], MPI_C_DOUBLE_COMPLEX, p, 0, comm, &req);
+    requests.push_back(req);
+  }
+
+  // P2P direct GPU-to-GPU copy for capable neighbours
+  for (int p = 0; p < nparts; ++p) {
+    if (p == myrank || !peer_enabled[p]) continue;
+    size_t recv_byte_off = static_cast<size_t>(recv_displs[p]) * elem_size;
     size_t remote_off = static_cast<size_t>(send_displs[myrank]) * elem_size;
     char *remote_buf = reinterpret_cast<char *>(remote_pack_ptrs[p]);
     backend.memcpy(
@@ -417,8 +446,24 @@ inline void exchange_p2p(
         static_cast<size_t>(recv_counts[p]) * elem_size);
   }
 
-  // Sync: ensure all reads complete
+  // Self-copy (local rank)
+  {
+    size_t send_byte_off = static_cast<size_t>(send_displs[myrank]) * elem_size;
+    size_t recv_byte_off = static_cast<size_t>(recv_displs[myrank]) * elem_size;
+    backend.memcpy(
+        reinterpret_cast<char *>(recv_into) + recv_byte_off,
+        reinterpret_cast<char *>(pack_buf) + send_byte_off,
+        static_cast<size_t>(send_counts[myrank]) * elem_size);
+  }
+
+  // Sync stream: ensure P2P reads and self-copy complete
   backend.sync();
+
+  // Wait for MPI transfers to complete
+  if (!requests.empty()) {
+    MPI_Waitall(static_cast<int>(requests.size()), requests.data(),
+                MPI_STATUSES_IGNORE);
+  }
 
   // Barrier: all ranks must finish reading before pack_buf can be reused
   MPI_Barrier(comm);

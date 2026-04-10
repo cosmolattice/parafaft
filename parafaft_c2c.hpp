@@ -249,10 +249,11 @@ public:
     // Close IPC handles before pack_buffer_ is freed
     if constexpr (Backend::use_p2p) {
       for (auto &info : p2p_info_) {
-        if (!info.enabled) continue;
-        for (auto *ptr : info.remote_pack_ptrs) {
-          if (ptr && ptr != pack_buffer_.data())
-            Backend::ipc_close_handle(ptr);
+        if (!info.any_enabled) continue;
+        for (int p = 0; p < static_cast<int>(info.remote_pack_ptrs.size()); ++p) {
+          if (info.peer_enabled[p] && info.remote_pack_ptrs[p] &&
+              info.remote_pack_ptrs[p] != pack_buffer_.data())
+            Backend::ipc_close_handle(info.remote_pack_ptrs[p]);
         }
       }
     }
@@ -466,13 +467,14 @@ public:
                    fwd_send_types_[stage].data(), dst,
                    fwd_recv_types_[stage].data(), exchange_counts_.data(),
                    exchange_displs_.data());
-        } else if (p2p_info_[stage].enabled) {
-          exchange_p2p<Backend>(
+        } else if (p2p_info_[stage].any_enabled) {
+          exchange_hybrid<Backend>(
               backend_, subcomms_[next_axis], nparts_[stage], D,
               src, stage_shapes_[stage].data(), D - 1 - stage,
               dst, stage_shapes_[stage + 1].data(), D - 2 - stage,
               pack_buffer_.data(),
-              p2p_info_[stage].remote_pack_ptrs.data());
+              p2p_info_[stage].remote_pack_ptrs.data(),
+              p2p_info_[stage].peer_enabled.data());
         } else {
           exchange_packed<Backend>(
               backend_, subcomms_[next_axis], nparts_[stage], D,
@@ -553,13 +555,14 @@ public:
                    fwd_recv_types_[trans].data(), dst,
                    fwd_send_types_[trans].data(), exchange_counts_.data(),
                    exchange_displs_.data());
-        } else if (p2p_info_[trans].enabled) {
-          exchange_p2p<Backend>(
+        } else if (p2p_info_[trans].any_enabled) {
+          exchange_hybrid<Backend>(
               backend_, subcomms_[comm_idx], nparts_[trans], D,
               src, stage_shapes_[trans + 1].data(), D - 2 - trans,
               dst, stage_shapes_[trans].data(), D - 1 - trans,
               pack_buffer_.data(),
-              p2p_info_[trans].remote_pack_ptrs.data());
+              p2p_info_[trans].remote_pack_ptrs.data(),
+              p2p_info_[trans].peer_enabled.data());
         } else {
           // Backward reverses forward: send from stage_shapes_[trans+1]
           // along D-2-trans, recv into stage_shapes_[trans] along D-1-trans
@@ -778,22 +781,37 @@ private:
         MPI_Allgather(&my_device, 1, MPI_INT,
                       devices.data(), 1, MPI_INT, comm);
 
-        // Check P2P for all pairs
-        bool all_p2p = true;
-        for (int p = 0; p < nparts && all_p2p; ++p) {
-          if (devices[p] == my_device) continue;
-          if (!Backend::can_access_peer(my_device, devices[p]))
-            all_p2p = false;
-        }
-        if (!all_p2p) continue;
+        int my_subrank;
+        MPI_Comm_rank(comm, &my_subrank);
 
-        // Enable peer access
+        // Check P2P capability per neighbour
+        p2p_info_[t].peer_enabled.resize(nparts, false);
         for (int p = 0; p < nparts; ++p) {
-          if (devices[p] != my_device)
+          if (p == my_subrank) {
+            p2p_info_[t].peer_enabled[p] = true; // self is always "p2p"
+          } else if (devices[p] == my_device ||
+                     Backend::can_access_peer(my_device, devices[p])) {
+            p2p_info_[t].peer_enabled[p] = true;
+          }
+        }
+
+        // Check if any remote neighbour supports P2P
+        bool any_p2p = false;
+        for (int p = 0; p < nparts; ++p) {
+          if (p != my_subrank && p2p_info_[t].peer_enabled[p]) {
+            any_p2p = true;
+            break;
+          }
+        }
+        if (!any_p2p) continue;
+
+        // Enable peer access only for capable neighbours
+        for (int p = 0; p < nparts; ++p) {
+          if (p2p_info_[t].peer_enabled[p] && devices[p] != my_device)
             Backend::enable_peer_access(devices[p]);
         }
 
-        // Exchange IPC handles for pack_buffer_
+        // Exchange IPC handles for pack_buffer_ (collective — all must call)
         using Handle = std::array<char, Backend::ipc_handle_size>;
         Handle my_handle{};
         Backend::ipc_get_handle(pack_buffer_.data(), my_handle.data());
@@ -801,12 +819,11 @@ private:
         MPI_Allgather(my_handle.data(), sizeof(Handle), MPI_BYTE,
                       handles.data(), sizeof(Handle), MPI_BYTE, comm);
 
-        // Open remote handles
-        int my_subrank;
-        MPI_Comm_rank(comm, &my_subrank);
-        p2p_info_[t].enabled = true;
+        // Open remote handles only for P2P-capable neighbours
+        p2p_info_[t].any_enabled = true;
         p2p_info_[t].remote_pack_ptrs.resize(nparts, nullptr);
         for (int p = 0; p < nparts; ++p) {
+          if (!p2p_info_[t].peer_enabled[p]) continue;
           if (p == my_subrank) {
             p2p_info_[t].remote_pack_ptrs[p] = pack_buffer_.data();
           } else {
@@ -856,7 +873,8 @@ private:
 
   /// Per-subcommunicator P2P exchange info (GPU backends only)
   struct P2PInfo {
-    bool enabled = false;
+    bool any_enabled = false;            ///< True if at least one neighbour uses P2P
+    std::vector<char> peer_enabled;      ///< Per-neighbour: true = P2P, false = MPI
     std::vector<void *> remote_pack_ptrs;
   };
   std::vector<P2PInfo> p2p_info_;
