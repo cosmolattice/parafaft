@@ -60,12 +60,30 @@ if(PARAFAFT_CUDA)
   set_target_properties(bench_c2c_cuda PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bench"
     CUDA_SEPARABLE_COMPILATION ON)
+  parafaft_mark_cuda_as_cxx(bench_c2c_cuda)
 
   add_executable(bench_r2c_cuda bench_r2c.cu)
   target_link_libraries(bench_r2c_cuda PRIVATE parafaft::parafaft MPI::MPI_CXX)
   set_target_properties(bench_r2c_cuda PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bench"
     CUDA_SEPARABLE_COMPILATION ON)
+  parafaft_mark_cuda_as_cxx(bench_r2c_cuda)
+endif()
+
+if(PARAFAFT_CUDA AND PARAFAFT_CUFFTMP)
+  add_executable(bench_c2c_cufftmp bench_c2c_cufftmp.cu)
+  target_link_libraries(bench_c2c_cufftmp PRIVATE parafaft::parafaft MPI::MPI_CXX)
+  set_target_properties(bench_c2c_cufftmp PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bench"
+    CUDA_SEPARABLE_COMPILATION ON)
+  parafaft_mark_cuda_as_cxx(bench_c2c_cufftmp)
+
+  add_executable(bench_r2c_cufftmp bench_r2c_cufftmp.cu)
+  target_link_libraries(bench_r2c_cufftmp PRIVATE parafaft::parafaft MPI::MPI_CXX)
+  set_target_properties(bench_r2c_cufftmp PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bench"
+    CUDA_SEPARABLE_COMPILATION ON)
+  parafaft_mark_cuda_as_cxx(bench_r2c_cufftmp)
 endif()
 
 file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/bench)

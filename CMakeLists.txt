@@ -39,6 +39,8 @@ if(PARAFAFT_CUDA)
   if(CMAKE_CXX_COMPILER_ID MATCHES "NVHPC")
     message(STATUS "CUDA support enabled via NVHPC")
     find_package(CUDAToolkit REQUIRED)
+    # nvc++ compiles .cu natively — tell CMake to treat them as CXX
+    set(PARAFAFT_NVHPC_CUDA TRUE)
   else()
     include(CheckLanguage)
     check_language(CUDA)
@@ -56,6 +58,19 @@ if(PARAFAFT_CUDA)
       message(FATAL_ERROR "CUDA support requested but no CUDA compiler found.")
     endif()
   endif()
+
+  # Helper: when NVHPC is the CXX compiler, .cu files must be marked as CXX
+  # so CMake knows how to compile and link them.
+  function(parafaft_mark_cuda_as_cxx target)
+    if(PARAFAFT_NVHPC_CUDA)
+      get_target_property(_sources ${target} SOURCES)
+      foreach(_src ${_sources})
+        if(_src MATCHES "\\.cu$")
+          set_source_files_properties(${_src} PROPERTIES LANGUAGE CXX)
+        endif()
+      endforeach()
+    endif()
+  endfunction()
 endif()
 
 # HIP support
