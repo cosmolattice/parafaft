@@ -279,27 +279,29 @@ public:
     int finalized;
     MPI_Finalized(&finalized);
     if (!finalized) {
-      // Free cached MPI subarray datatypes (only created when using alltoallw)
-      if constexpr (Backend::use_alltoallw) {
-        for (auto &types : fwd_send_types_) {
-          for (auto &t : types) {
-            MPI_Type_free(&t);
+      if constexpr (!Backend::handles_distributed) {
+        // Free cached MPI subarray datatypes (only created when using alltoallw)
+        if constexpr (Backend::use_alltoallw) {
+          for (auto &types : fwd_send_types_) {
+            for (auto &t : types) {
+              MPI_Type_free(&t);
+            }
+          }
+          for (auto &types : fwd_recv_types_) {
+            for (auto &t : types) {
+              MPI_Type_free(&t);
+            }
           }
         }
-        for (auto &types : fwd_recv_types_) {
-          for (auto &t : types) {
-            MPI_Type_free(&t);
-          }
-        }
-      }
 
-      for (auto &comm : subcomms_) {
-        if (comm != MPI_COMM_NULL) {
-          MPI_Comm_free(&comm);
+        for (auto &comm : subcomms_) {
+          if (comm != MPI_COMM_NULL) {
+            MPI_Comm_free(&comm);
+          }
         }
-      }
-      if (comm_cart_ != MPI_COMM_NULL) {
-        MPI_Comm_free(&comm_cart_);
+        if (comm_cart_ != MPI_COMM_NULL) {
+          MPI_Comm_free(&comm_cart_);
+        }
       }
     }
   }
