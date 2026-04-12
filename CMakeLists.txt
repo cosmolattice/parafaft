@@ -152,7 +152,7 @@ target_include_directories(parafaft
                            INTERFACE $<BUILD_INTERFACE:${FFTW3_INCLUDE_DIRS}>)
 
 # Add CUDA dependencies if enabled
-if(PARAFAFT_CUDA AND CMAKE_CUDA_COMPILER)
+if(PARAFAFT_CUDA)
   # cuFFTMp: multi-GPU distributed FFT via NVSHMEM (replaces cuFFT when available)
   if(PARAFAFT_CUFFTMP)
     include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/cufftmp.cmake)
