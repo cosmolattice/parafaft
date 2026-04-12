@@ -19,6 +19,10 @@
 #   cufftMp::cufftMp     - cuFFTMp library
 #   nvshmem::host        - NVSHMEM host library
 
+if(CMAKE_CXX_COMPILER_ID MATCHES "NVHPC")
+  add_compile_options(-cudalib=cufftmp)
+endif()
+
 set(CUFFTMP_HOME "$ENV{CUFFTMP_HOME}" CACHE PATH "Path to cuFFTMp installation")
 set(NVSHMEM_HOME "$ENV{NVSHMEM_HOME}" CACHE PATH "Path to NVSHMEM installation")
 
@@ -103,3 +107,4 @@ if(CUFFTMP_FOUND)
 endif()
 
 mark_as_advanced(CUFFTMP_INCLUDE_DIR CUFFTMP_LIBRARY NVSHMEM_INCLUDE_DIR NVSHMEM_LIBRARY)
+endif()
