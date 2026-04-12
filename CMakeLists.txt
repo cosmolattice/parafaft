@@ -63,6 +63,7 @@ if(PARAFAFT_CUDA)
   # so CMake knows how to compile and link them.
   function(parafaft_mark_cuda_as_cxx target)
     if(PARAFAFT_NVHPC_CUDA)
+      target_compile_options(${target} -cuda)
       get_target_property(_sources ${target} SOURCES)
       foreach(_src ${_sources})
         if(_src MATCHES "\\.cu$")
