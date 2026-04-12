@@ -15,7 +15,9 @@
 #ifndef PARAFAFT_BACKEND_CUFFTMP_HPP
 #define PARAFAFT_BACKEND_CUFFTMP_HPP
 
-#ifdef PARAFAFT_CUFFTMP_ENABLED
+#if defined(PARAFAFT_CUFFTMP_ENABLED) && \
+    (defined(__CUDACC__) || defined(__CUDA_ARCH__) || defined(__NVCC__) || \
+     defined(__NVCOMPILER_CUDA__))
 
 #include <cufftMp.h>
 #include <cuda_runtime.h>
@@ -267,20 +269,24 @@ private:
     detail::check_cufftmp(
         cufftSetStream(plan, stream_), "cufftSetStream");
 
+    // Attach MPI communicator before creating the plan (cuFFTMp API)
+    detail::check_cufftmp(
+        cufftMpAttachComm(plan, CUFFT_COMM_MPI, &comm_),
+        "cufftMpAttachComm");
+
     size_t work_size = 0;
     if constexpr (D == 2) {
       detail::check_cufftmp(
-          cufftMpMakePlan2d(plan, global_shape_[0], global_shape_[1],
-                            type, &comm_, CUFFT_COMM_MPI, &work_size),
-          "cufftMpMakePlan2d");
+          cufftMakePlan2d(plan, global_shape_[0], global_shape_[1],
+                          type, &work_size),
+          "cufftMakePlan2d");
     } else {
       // 3D: use slab decomposition for now
-      // TODO: pencil decomposition via cufftMpMakePlanDecomposition
+      // TODO: pencil decomposition via cufftXtSetDistribution
       detail::check_cufftmp(
-          cufftMpMakePlan3d(plan, global_shape_[0], global_shape_[1],
-                            global_shape_[2], type,
-                            &comm_, CUFFT_COMM_MPI, &work_size),
-          "cufftMpMakePlan3d");
+          cufftMakePlan3d(plan, global_shape_[0], global_shape_[1],
+                          global_shape_[2], type, &work_size),
+          "cufftMakePlan3d");
     }
   }
 
