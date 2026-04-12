@@ -142,14 +142,20 @@ public:
       // Backend handles MPI decomposition, communication, and FFT internally
       backend_.setup_distributed(global_shape, comm);
       auto info = backend_.get_distributed_info();
-      // Store shapes for public API queries
-      stage_shapes_.resize(1);
-      stage_shapes_[0].resize(D);
-      stage_output_shapes_.resize(1);
-      stage_output_shapes_[0].resize(D);
+      // Store shapes for public API queries. get_required_output_size() loops
+      // from 0..D over stage_output_shapes_, so allocate D stages and
+      // replicate the backend-reported shape into each slot.
+      stage_shapes_.resize(D);
+      stage_output_shapes_.resize(D);
+      for (int s = 0; s < D; ++s) {
+        stage_shapes_[s].resize(D);
+        stage_output_shapes_[s].resize(D);
+        for (int i = 0; i < D; ++i) {
+          stage_shapes_[s][i] = info.local_shape[i];
+          stage_output_shapes_[s][i] = info.output_shape[i];
+        }
+      }
       for (int i = 0; i < D; ++i) {
-        stage_shapes_[0][i] = info.local_shape[i];
-        stage_output_shapes_[0][i] = info.output_shape[i];
         real_global_start_[i] = info.global_start[i];
         complex_global_start_[i] = info.output_start[i];
       }
