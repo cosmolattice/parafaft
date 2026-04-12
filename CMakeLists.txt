@@ -36,20 +36,25 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # CUDA support
 if(PARAFAFT_CUDA)
-  include(CheckLanguage)
-  check_language(CUDA)
-  if(CMAKE_CUDA_COMPILER)
-    enable_language(CUDA)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "NVHPC")
+    message(STATUS "CUDA support enabled via NVHPC")
     find_package(CUDAToolkit REQUIRED)
-    message(STATUS "CUDA support enabled")
-
-    # Set CUDA architectures if not specified
-    if(NOT CMAKE_CUDA_ARCHITECTURES)
-      set(CMAKE_CUDA_ARCHITECTURES "native")
-    endif()
-    message(STATUS "CUDA architectures set to: ${CMAKE_CUDA_ARCHITECTURES}")
   else()
-    message(FATAL_ERROR "CUDA support requested but no CUDA compiler found.")
+    include(CheckLanguage)
+    check_language(CUDA)
+    if(CMAKE_CUDA_COMPILER)
+      enable_language(CUDA)
+      find_package(CUDAToolkit REQUIRED)
+      message(STATUS "CUDA support enabled")
+
+      # Set CUDA architectures if not specified
+      if(NOT CMAKE_CUDA_ARCHITECTURES)
+        set(CMAKE_CUDA_ARCHITECTURES "native")
+      endif()
+      message(STATUS "CUDA architectures set to: ${CMAKE_CUDA_ARCHITECTURES}")
+    else()
+      message(FATAL_ERROR "CUDA support requested but no CUDA compiler found.")
+    endif()
   endif()
 endif()
 
