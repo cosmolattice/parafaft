@@ -159,6 +159,7 @@ if(PARAFAFT_CUDA)
     if(CMAKE_CXX_COMPILER_ID MATCHES "NVHPC")
       target_compile_definitions(parafaft INTERFACE PARAFAFT_CUDA_ENABLED PARAFAFT_CUFFTMP_ENABLED)
       target_compile_options(parafaft INTERFACE -cudalib=cufftmp)
+      target_link_options(parafaft INTERFACE -cudalib=cufftmp)
       message(STATUS "cuFFTMp support enabled (replaces cuFFT)")
     elseif(CUFFTMP_FOUND)
       # cuFFTMp is a superset of cuFFT — link it INSTEAD of CUDA::cufft
