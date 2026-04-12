@@ -83,6 +83,8 @@ find_package_handle_standard_args(CUFFTMP
 )
 
 if(CUFFTMP_FOUND)
+  message(STATUS "Found cuFFTMp: ${CUFFTMP_LIBRARY}")
+
   if(NOT TARGET cufftMp::cufftMp)
     add_library(cufftMp::cufftMp SHARED IMPORTED)
     set_target_properties(cufftMp::cufftMp PROPERTIES
