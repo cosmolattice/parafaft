@@ -1,6 +1,6 @@
 find_package(OpenMP REQUIRED)
 
-find_library(FFTW3_MPI_LIB fftw3_mpi HINTS ${FFTW_DIR}/lib)
+find_library(FFTW3_MPI_LIB fftw3_mpi HINTS ${PARAFAFT_FFTW_LIB_DIR})
 mark_as_advanced(FFTW3_MPI_LIB)
 
 if(NOT FFTW3_MPI_LIB)

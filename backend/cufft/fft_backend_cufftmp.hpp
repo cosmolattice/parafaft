@@ -17,12 +17,12 @@
 
 #ifdef PARAFAFT_CUFFTMP_ENABLED
 
-#include "../fft_backend.hpp"
-#include "./fft_backend_cufft.hpp" // reuse cuvector<T>
-
 #include <cufftMp.h>
 #include <cuda_runtime.h>
 #include <mpi.h>
+
+#include "../fft_backend.hpp"
+#include "./fft_backend_cufft.hpp" // reuse cuvector<T>
 
 #include <array>
 #include <stdexcept>
