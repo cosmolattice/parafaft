@@ -59,34 +59,34 @@ if(PARAFAFT_CUDA)
   target_link_libraries(test_cufft_c2c_nd parafaft::parafaft)
   set_target_properties(test_cufft_c2c_nd PROPERTIES RUNTIME_OUTPUT_DIRECTORY
                                                      ${CMAKE_BINARY_DIR}/c2c)
-  parafaft_mark_cuda_as_cxx(test_cufft_c2c_nd)
+  parafaft_enable_cuda_sources(test_cufft_c2c_nd)
 
   # R2C MPI Tests
   add_executable(test_cufft_r2c_nd r2c/test_cufft_r2c_nd.cu)
   target_link_libraries(test_cufft_r2c_nd parafaft::parafaft)
   set_target_properties(test_cufft_r2c_nd PROPERTIES RUNTIME_OUTPUT_DIRECTORY
                                                      ${CMAKE_BINARY_DIR}/r2c)
-  parafaft_mark_cuda_as_cxx(test_cufft_r2c_nd)
+  parafaft_enable_cuda_sources(test_cufft_r2c_nd)
 
   add_executable(test_cufft_r2c_padded_nd r2c/test_cufft_r2c_padded_nd.cu)
   target_link_libraries(test_cufft_r2c_padded_nd parafaft::parafaft)
   set_target_properties(
     test_cufft_r2c_padded_nd PROPERTIES RUNTIME_OUTPUT_DIRECTORY
                                         ${CMAKE_BINARY_DIR}/r2c)
-  parafaft_mark_cuda_as_cxx(test_cufft_r2c_padded_nd)
+  parafaft_enable_cuda_sources(test_cufft_r2c_padded_nd)
 
   # Unit Tests (cuFFT Backend)
   add_executable(test_cuvector unit/test_cuvector.cu)
   target_link_libraries(test_cuvector CUDA::cudart)
   set_target_properties(test_cuvector PROPERTIES RUNTIME_OUTPUT_DIRECTORY
                                                  ${CMAKE_BINARY_DIR}/unit)
-  parafaft_mark_cuda_as_cxx(test_cuvector)
+  parafaft_enable_cuda_sources(test_cuvector)
 
   add_executable(test_cufft_backend unit/test_cufft_backend.cu)
   target_link_libraries(test_cufft_backend parafaft::parafaft)
   set_target_properties(test_cufft_backend PROPERTIES RUNTIME_OUTPUT_DIRECTORY
                                                       ${CMAKE_BINARY_DIR}/unit)
-  parafaft_mark_cuda_as_cxx(test_cufft_backend)
+  parafaft_enable_cuda_sources(test_cufft_backend)
 endif()
 
 # ##############################################################################
@@ -275,13 +275,13 @@ if(PARAFAFT_CUDA AND PARAFAFT_CUFFTMP)
   target_link_libraries(test_cufftmp_c2c_nd parafaft::parafaft)
   set_target_properties(test_cufftmp_c2c_nd PROPERTIES RUNTIME_OUTPUT_DIRECTORY
                                                        ${CMAKE_BINARY_DIR}/c2c)
-  parafaft_mark_cuda_as_cxx(test_cufftmp_c2c_nd)
+  parafaft_enable_cuda_sources(test_cufftmp_c2c_nd)
 
   add_executable(test_cufftmp_r2c_nd r2c/test_cufftmp_r2c_nd.cu)
   target_link_libraries(test_cufftmp_r2c_nd parafaft::parafaft)
   set_target_properties(test_cufftmp_r2c_nd PROPERTIES RUNTIME_OUTPUT_DIRECTORY
                                                        ${CMAKE_BINARY_DIR}/r2c)
-  parafaft_mark_cuda_as_cxx(test_cufftmp_r2c_nd)
+  parafaft_enable_cuda_sources(test_cufftmp_r2c_nd)
 
   # cuFFTMp only supports D=2,3. Test with np=1 and np=2.
   foreach(S 0 1 2)

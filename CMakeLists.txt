@@ -59,20 +59,11 @@ if(PARAFAFT_CUDA)
     endif()
   endif()
 
-  # Helper: when NVHPC is the CXX compiler, .cu files must be marked as CXX
-  # so CMake knows how to compile and link them.
-  function(parafaft_mark_cuda_as_cxx target)
-    if(PARAFAFT_NVHPC_CUDA)
-      target_compile_options(${target} PRIVATE -cuda)
-      target_link_options("${target}" PRIVATE -cuda)
-      get_target_property(_sources ${target} SOURCES)
-      foreach(_src ${_sources})
-        if(_src MATCHES "\\.cu$")
-          set_source_files_properties(${_src} PROPERTIES LANGUAGE CXX)
-        endif()
-      endforeach()
-    endif()
-  endfunction()
+  # Downstream-facing helper (parafaft_enable_cuda_sources) lives in
+  # cmake/parafaftHelpers.cmake so it can be installed/exported alongside
+  # parafaftConfig.cmake. Include it in-tree so tests and benchmarks can
+  # use it too.
+  include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/parafaftHelpers.cmake)
 endif()
 
 # HIP support
@@ -151,28 +142,46 @@ target_link_libraries(parafaft INTERFACE ${PARAFAFT_LINK_LIBRARIES})
 target_include_directories(parafaft
                            INTERFACE $<BUILD_INTERFACE:${FFTW3_INCLUDE_DIRS}>)
 
-# Add CUDA dependencies if enabled
+# Add CUDA dependencies if enabled.
+#
+# Compile/link flags that are NVHPC-specific are propagated via the
+# INTERFACE target wrapped in $<$<CXX_COMPILER_ID:NVHPC>:…>. This way a
+# consumer using clang or gcc against an installed ParaFaFT sees no
+# NVHPC-only flags, while an NVHPC consumer gets -cuda (and
+# -cudalib=cufftmp when appropriate) automatically.
 if(PARAFAFT_CUDA)
-  # cuFFTMp: multi-GPU distributed FFT via NVSHMEM (replaces cuFFT when available)
   if(PARAFAFT_CUFFTMP)
     include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/cufftmp.cmake)
     if(CMAKE_CXX_COMPILER_ID MATCHES "NVHPC")
-      target_compile_definitions(parafaft INTERFACE PARAFAFT_CUDA_ENABLED PARAFAFT_CUFFTMP_ENABLED)
-      target_compile_options(parafaft INTERFACE -cudalib=cufftmp)
-      target_link_options(parafaft INTERFACE -cudalib=cufftmp)
-      message(STATUS "cuFFTMp support enabled (replaces cuFFT)")
+      target_compile_definitions(parafaft INTERFACE
+        PARAFAFT_CUDA_ENABLED PARAFAFT_CUFFTMP_ENABLED)
+      target_compile_options(parafaft INTERFACE
+        $<$<CXX_COMPILER_ID:NVHPC>:-cuda -cudalib=cufftmp>)
+      target_link_options(parafaft INTERFACE
+        $<$<CXX_COMPILER_ID:NVHPC>:-cuda -cudalib=cufftmp>)
+      message(STATUS "cuFFTMp support enabled (NVHPC)")
     elseif(CUFFTMP_FOUND)
       # cuFFTMp is a superset of cuFFT — link it INSTEAD of CUDA::cufft
-      target_link_libraries(parafaft INTERFACE cufftMp::cufftMp nvshmem::host CUDA::cuda_driver CUDA::cudart)
-      target_compile_definitions(parafaft INTERFACE PARAFAFT_CUDA_ENABLED PARAFAFT_CUFFTMP_ENABLED)
+      target_link_libraries(parafaft INTERFACE
+        cufftMp::cufftMp nvshmem::host CUDA::cuda_driver CUDA::cudart)
+      target_compile_definitions(parafaft INTERFACE
+        PARAFAFT_CUDA_ENABLED PARAFAFT_CUFFTMP_ENABLED)
       message(STATUS "cuFFTMp support enabled (replaces cuFFT)")
     else()
       message(FATAL_ERROR "PARAFAFT_CUFFTMP=ON but cuFFTMp/NVSHMEM not found. "
               "Set CUFFTMP_HOME and NVSHMEM_HOME or install NVIDIA HPC SDK.")
     endif()
   else()
-    target_link_libraries(parafaft INTERFACE CUDA::cufft CUDA::cudart)
-    target_compile_definitions(parafaft INTERFACE PARAFAFT_CUDA_ENABLED)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "NVHPC")
+      target_compile_definitions(parafaft INTERFACE PARAFAFT_CUDA_ENABLED)
+      target_compile_options(parafaft INTERFACE
+        $<$<CXX_COMPILER_ID:NVHPC>:-cuda>)
+      target_link_options(parafaft INTERFACE
+        $<$<CXX_COMPILER_ID:NVHPC>:-cuda>)
+    else()
+      target_link_libraries(parafaft INTERFACE CUDA::cufft CUDA::cudart)
+      target_compile_definitions(parafaft INTERFACE PARAFAFT_CUDA_ENABLED)
+    endif()
   endif()
   set_property(TARGET parafaft PROPERTY CUDA_SEPARABLE_COMPILATION ON)
 endif()
@@ -235,4 +244,5 @@ write_basic_package_version_file(
 
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/parafaftConfig.cmake
               ${CMAKE_CURRENT_BINARY_DIR}/parafaftConfigVersion.cmake
+              ${CMAKE_CURRENT_SOURCE_DIR}/cmake/parafaftHelpers.cmake
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/parafaft)

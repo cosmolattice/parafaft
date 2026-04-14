@@ -10,4 +10,7 @@ pkg_check_modules(FFTW3 REQUIRED fftw3)
 # Include targets
 include("${CMAKE_CURRENT_LIST_DIR}/parafaftTargets.cmake")
 
+# Downstream-facing helpers (e.g. parafaft_enable_cuda_sources)
+include("${CMAKE_CURRENT_LIST_DIR}/parafaftHelpers.cmake")
+
 check_required_components(parafaft)
