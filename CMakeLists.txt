@@ -9,7 +9,7 @@ project(
 option(PARAFAFT_CUDA "Enable CUDA support" OFF)
 option(PARAFAFT_HIP "Enable HIP support" OFF)
 option(PARAFAFT_TEST "Build tests" OFF)
-option(PARAFAFT_BENCHMARK "Build benchmarks" OFF)
+option(PARAFAFT_BENCH "Build benchmarks" OFF)
 option(PARAFAFT_GPU_ALLTOALLW
        "Use MPI_Alltoallw with derived types for GPU backends" OFF)
 option(PARAFAFT_CUFFTMP
@@ -205,7 +205,7 @@ if(PARAFAFT_TEST)
 endif()
 
 # Add benchmark subdirectory if enabled
-if(PARAFAFT_BENCHMARK)
+if(PARAFAFT_BENCH)
   add_subdirectory(benchmark)
 endif()
 
