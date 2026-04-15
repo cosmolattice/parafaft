@@ -164,7 +164,8 @@ public:
         global_complex_shape_[i] = global_real_shape_[i];
       }
       global_complex_shape_[D - 1] = global_real_shape_[D - 1] / 2 + 1;
-      // required_size is stored via stage_output_shapes_ for get_required_output_size()
+      // required_size is stored via stage_output_shapes_ for
+      // get_required_output_size()
     } else {
       // Standard ParaFaFT: manual pencil decomposition + MPI exchange
 
@@ -241,8 +242,10 @@ public:
     // Close IPC handles before pack_buffer_ is freed
     if constexpr (Backend::use_p2p) {
       for (auto &info : p2p_info_) {
-        if (!info.any_enabled) continue;
-        for (int p = 0; p < static_cast<int>(info.remote_pack_ptrs.size()); ++p) {
+        if (!info.any_enabled)
+          continue;
+        for (int p = 0; p < static_cast<int>(info.remote_pack_ptrs.size());
+             ++p) {
           if (info.peer_enabled[p] && info.remote_pack_ptrs[p] &&
               info.remote_pack_ptrs[p] != pack_buffer_.data())
             Backend::ipc_close_handle(info.remote_pack_ptrs[p]);
@@ -254,7 +257,8 @@ public:
     MPI_Finalized(&finalized);
     if (!finalized) {
       if constexpr (!Backend::handles_distributed) {
-        // Free cached MPI subarray datatypes (only created when using alltoallw)
+        // Free cached MPI subarray datatypes (only created when using
+        // alltoallw)
         if constexpr (Backend::use_alltoallw) {
           for (auto &types : fwd_send_types_) {
             for (auto &t : types) {
@@ -374,14 +378,13 @@ public:
         exchange_local<Backend>(backend_, src, dst, pack_buffer_.data(),
                                 fwd_exchange_geom_[trans]);
       } else if (p2p_info_[trans].any_enabled) {
-        exchange_hybrid<Backend>(backend_, subcomms_[axis], nparts_[trans],
-                                 src, dst, pack_buffer_.data(),
-                                 p2p_info_[trans].remote_pack_ptrs.data(),
-                                 p2p_info_[trans].peer_enabled.data(),
-                                 fwd_exchange_geom_[trans]);
+        exchange_hybrid<Backend>(
+            backend_, subcomms_[axis], nparts_[trans], src, dst,
+            pack_buffer_.data(), p2p_info_[trans].remote_pack_ptrs.data(),
+            p2p_info_[trans].peer_enabled.data(), fwd_exchange_geom_[trans]);
       } else {
-        exchange_packed<Backend>(backend_, subcomms_[axis], nparts_[trans],
-                                 src, dst, pack_buffer_.data(),
+        exchange_packed<Backend>(backend_, subcomms_[axis], nparts_[trans], src,
+                                 dst, pack_buffer_.data(),
                                  fwd_exchange_geom_[trans]);
       }
 
@@ -488,14 +491,13 @@ public:
         exchange_local<Backend>(backend_, src, dst, pack_buffer_.data(),
                                 bwd_exchange_geom_[trans]);
       } else if (p2p_info_[trans].any_enabled) {
-        exchange_hybrid<Backend>(backend_, subcomms_[axis], nparts_[trans],
-                                 src, dst, pack_buffer_.data(),
-                                 p2p_info_[trans].remote_pack_ptrs.data(),
-                                 p2p_info_[trans].peer_enabled.data(),
-                                 bwd_exchange_geom_[trans]);
+        exchange_hybrid<Backend>(
+            backend_, subcomms_[axis], nparts_[trans], src, dst,
+            pack_buffer_.data(), p2p_info_[trans].remote_pack_ptrs.data(),
+            p2p_info_[trans].peer_enabled.data(), bwd_exchange_geom_[trans]);
       } else {
-        exchange_packed<Backend>(backend_, subcomms_[axis], nparts_[trans],
-                                 src, dst, pack_buffer_.data(),
+        exchange_packed<Backend>(backend_, subcomms_[axis], nparts_[trans], src,
+                                 dst, pack_buffer_.data(),
                                  bwd_exchange_geom_[trans]);
       }
 
@@ -695,7 +697,7 @@ public:
    * @return Device pointer to the internal buffer as double*, or nullptr
    *         if the backend does not manage its own buffer.
    */
-  double* get_real_buffer() {
+  double *get_real_buffer() {
     if constexpr (Backend::handles_distributed) {
       return backend_.get_real_buffer();
     } else {
@@ -708,7 +710,7 @@ public:
    *
    * @return Device pointer to the internal buffer as Complex*, or nullptr.
    */
-  Complex* get_buffer() {
+  Complex *get_buffer() {
     if constexpr (Backend::handles_distributed) {
       return backend_.get_buffer();
     } else {
@@ -739,9 +741,9 @@ private:
     }
 
     // Single 2D copy: contiguous real rows → padded rows
-    backend_.memcpy2d(padded_output, padded_stride * sizeof(double),
-                      real_input, last_dim * sizeof(double),
-                      last_dim * sizeof(double), batch);
+    backend_.memcpy2d(padded_output, padded_stride * sizeof(double), real_input,
+                      last_dim * sizeof(double), last_dim * sizeof(double),
+                      batch);
   }
 
   /**
@@ -766,9 +768,9 @@ private:
     }
 
     // Single 2D copy: padded rows → contiguous real rows
-    backend_.memcpy2d(real_output, last_dim * sizeof(double),
-                      padded_input, padded_stride * sizeof(double),
-                      last_dim * sizeof(double), batch);
+    backend_.memcpy2d(real_output, last_dim * sizeof(double), padded_input,
+                      padded_stride * sizeof(double), last_dim * sizeof(double),
+                      batch);
   }
 
   /**
@@ -844,24 +846,39 @@ private:
 
       for (int t = 0; t < D - 1; ++t) {
         int nparts = nparts_[t];
-        if (nparts <= 1) continue;
+        if (nparts <= 1)
+          continue;
 
         MPI_Comm comm = subcomms_[D - 2 - t];
 
         std::vector<int> devices(nparts);
-        MPI_Allgather(&my_device, 1, MPI_INT,
-                      devices.data(), 1, MPI_INT, comm);
+        MPI_Allgather(&my_device, 1, MPI_INT, devices.data(), 1, MPI_INT, comm);
 
+        // Get this rank's subrank within the subcommunicator
         int my_subrank;
         MPI_Comm_rank(comm, &my_subrank);
+
+        // Classify subcomm ranks by physical node. CUDA IPC handles are
+        // strictly intra-node, so inter-node peers must fall through to the
+        // non-P2P MPI path regardless of device ordinal or peer-access query.
+        MPI_Comm shared_comm;
+        MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL,
+                            &shared_comm);
+        int node_leader = my_subrank;
+        MPI_Bcast(&node_leader, 1, MPI_INT, 0, shared_comm);
+        std::vector<int> node_id(nparts);
+        MPI_Allgather(&node_leader, 1, MPI_INT, node_id.data(), 1, MPI_INT,
+                      comm);
+        MPI_Comm_free(&shared_comm);
 
         // Check P2P capability per neighbour
         p2p_info_[t].peer_enabled.resize(nparts, false);
         for (int p = 0; p < nparts; ++p) {
           if (p == my_subrank) {
             p2p_info_[t].peer_enabled[p] = true; // self is always "p2p"
-          } else if (devices[p] == my_device ||
-                     Backend::can_access_peer(my_device, devices[p])) {
+          } else if (node_id[p] == node_id[my_subrank] &&
+                     (devices[p] == my_device ||
+                      Backend::can_access_peer(my_device, devices[p]))) {
             p2p_info_[t].peer_enabled[p] = true;
           }
         }
@@ -874,7 +891,8 @@ private:
             break;
           }
         }
-        if (!any_p2p) continue;
+        if (!any_p2p)
+          continue;
 
         // Enable peer access only for capable neighbours
         for (int p = 0; p < nparts; ++p) {
@@ -894,7 +912,8 @@ private:
         p2p_info_[t].any_enabled = true;
         p2p_info_[t].remote_pack_ptrs.resize(nparts, nullptr);
         for (int p = 0; p < nparts; ++p) {
-          if (!p2p_info_[t].peer_enabled[p]) continue;
+          if (!p2p_info_[t].peer_enabled[p])
+            continue;
           if (p == my_subrank) {
             p2p_info_[t].remote_pack_ptrs[p] = pack_buffer_.data();
           } else {
@@ -1133,8 +1152,8 @@ private:
 
   /// Per-subcommunicator P2P exchange info (GPU backends only)
   struct P2PInfo {
-    bool any_enabled = false;            ///< True if at least one neighbour uses P2P
-    std::vector<char> peer_enabled;      ///< Per-neighbour: true = P2P, false = MPI
+    bool any_enabled = false;       ///< True if at least one neighbour uses P2P
+    std::vector<char> peer_enabled; ///< Per-neighbour: true = P2P, false = MPI
     std::vector<void *> remote_pack_ptrs;
   };
   std::vector<P2PInfo> p2p_info_;
