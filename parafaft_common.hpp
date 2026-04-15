@@ -82,12 +82,24 @@ inline void decompose(int N, int M, int p, int &n, int &s) {
  */
 inline void subarray(MPI_Datatype datatype, int ndims, const int sizes[],
                      int axis, int nparts, MPI_Datatype subarrays[]) {
-  // Precondition: every partition must receive at least one element along
-  // `axis`, otherwise MPI_Type_create_subarray rejects the subsize=0 case
-  // with MPI_ERR_ARG. This happens when the global extent on the partition
-  // axis is smaller than the number of partitions (e.g. nGrid=4 on 4 ranks
-  // for a higher-dimensional pencil decomposition where dims_[i] > sizes[i]).
-  // Failing here gives a much clearer diagnostic than the deferred MPI abort.
+  // Preconditions for MPI_Type_create_subarray. MPI rejects with MPI_ERR_ARG
+  // when any dimension's size is zero, or when the partition axis can't be
+  // split evenly enough for every partition to get >= 1 element. Both
+  // happen when the global grid is too small for the chosen pencil
+  // decomposition (e.g. nGrid=4 across 5 ranks: some rank ends up owning
+  // zero rows along the split axis). Failing here gives a much clearer
+  // diagnostic than the deferred MPI abort.
+  for (int i = 0; i < ndims; ++i) {
+    if (sizes[i] <= 0) {
+      std::ostringstream msg;
+      msg << "ParaFaFT: cannot create subarray with zero extent on axis " << i
+          << " (sizes[" << i << "] = " << sizes[i]
+          << "). The global grid is too small for this pencil decomposition; "
+             "increase the grid size on this axis or reduce the number of MPI "
+             "ranks.";
+      throw std::runtime_error(msg.str());
+    }
+  }
   if (sizes[axis] < nparts) {
     std::ostringstream msg;
     msg << "ParaFaFT: cannot decompose axis " << axis << " of extent "
