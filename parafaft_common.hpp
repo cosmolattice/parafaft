@@ -22,6 +22,8 @@
 #include "./backend/fft_backend.hpp"
 #include <cstring>
 #include <mpi.h>
+#include <sstream>
+#include <stdexcept>
 #include <vector>
 
 namespace parafaft {
@@ -80,6 +82,22 @@ inline void decompose(int N, int M, int p, int &n, int &s) {
  */
 inline void subarray(MPI_Datatype datatype, int ndims, const int sizes[],
                      int axis, int nparts, MPI_Datatype subarrays[]) {
+  // Precondition: every partition must receive at least one element along
+  // `axis`, otherwise MPI_Type_create_subarray rejects the subsize=0 case
+  // with MPI_ERR_ARG. This happens when the global extent on the partition
+  // axis is smaller than the number of partitions (e.g. nGrid=4 on 4 ranks
+  // for a higher-dimensional pencil decomposition where dims_[i] > sizes[i]).
+  // Failing here gives a much clearer diagnostic than the deferred MPI abort.
+  if (sizes[axis] < nparts) {
+    std::ostringstream msg;
+    msg << "ParaFaFT: cannot decompose axis " << axis << " of extent "
+        << sizes[axis] << " across " << nparts
+        << " partitions (need extent >= nparts so every partition gets >= 1 "
+           "element). Increase the global grid size on this axis or reduce "
+           "the number of MPI ranks.";
+    throw std::runtime_error(msg.str());
+  }
+
   // Use a fixed-size stack buffer for subsizes/substarts
   std::vector<int> subsizes(ndims), substarts(ndims);
 
