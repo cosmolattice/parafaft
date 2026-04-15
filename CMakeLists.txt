@@ -159,6 +159,24 @@ if(PARAFAFT_CUDA)
         $<$<CXX_COMPILER_ID:NVHPC>:-cuda -cudalib=cufftmp>)
       target_link_options(parafaft INTERFACE
         $<$<CXX_COMPILER_ID:NVHPC>:-cuda -cudalib=cufftmp>)
+      # `-cudalib=cufftmp` is supposed to add the math_libs include path, but
+      # that resolution can fail in downstream builds where another CUDA
+      # toolkit module or nvcc-style flags are present. Attach the include
+      # dir explicitly so consumers see cufftMp.h regardless.
+      if(CUFFTMP_INCLUDE_DIR)
+        target_include_directories(parafaft INTERFACE
+          $<BUILD_INTERFACE:${CUFFTMP_INCLUDE_DIR}>)
+      else()
+        message(WARNING
+          "cuFFTMp: cufftMp.h not located for NVHPC build. Relying on "
+          "-cudalib=cufftmp to supply the include path. If downstream "
+          "consumers fail with 'cannot open source file \"cufftMp.h\"', set "
+          "CUFFTMP_HOME to your HPC SDK's math_libs/<ver> directory.")
+      endif()
+      if(NVSHMEM_INCLUDE_DIR)
+        target_include_directories(parafaft INTERFACE
+          $<BUILD_INTERFACE:${NVSHMEM_INCLUDE_DIR}>)
+      endif()
       message(STATUS "cuFFTMp support enabled (NVHPC)")
     elseif(CUFFTMP_FOUND)
       # cuFFTMp is a superset of cuFFT — link it INSTEAD of CUDA::cufft
