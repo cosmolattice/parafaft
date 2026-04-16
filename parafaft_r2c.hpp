@@ -92,16 +92,13 @@ namespace parafaft {
  * - Ping-pong buffering with minimal memory overhead
  *
  * @tparam D Number of dimensions (must be >= 2)
- * @tparam Backend FFT backend type (default: FFTWBackend<>)
- * @tparam FloatType Scalar precision (default: double). Must match Backend::FloatType.
+ * @tparam Backend FFT backend type (default: FFTWBackend<>). The scalar
+ *         precision is selected via the backend (e.g. `FFTWBackend<float>`).
  */
-template <int D, typename Backend = FFTWBackend<>, typename FloatType = double>
+template <int D, typename Backend = FFTWBackend<>>
 class ParaFaFT_R2C {
-  static_assert(std::is_same<FloatType, typename Backend::FloatType>::value,
-                "ParaFaFT_R2C: FloatType must match Backend::FloatType — you "
-                "instantiated the class with mismatched precision parameters.");
-
 public:
+  using FloatType = typename Backend::FloatType;
   using Complex = typename Backend::Complex;
   using Buffer = typename Backend::Buffer;
   using ComplexBuffer = typename Backend::ComplexBuffer;

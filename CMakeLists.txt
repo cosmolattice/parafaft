@@ -130,6 +130,29 @@ endif()
 # Add main FFTW library last (threaded libs depend on it)
 list(APPEND PARAFAFT_LINK_LIBRARIES ${FFTW3_LIBRARIES})
 
+# Optional: single-precision FFTW (fftw3f) — enables FFTWBackend<float>.
+# Link only when the library was found at configure time; otherwise the
+# float trait specialization stays undefined and FFTWBackend<float> is
+# unavailable to consumers.
+if(PARAFAFT_FFTW3F_AVAILABLE)
+  # Match the double-precision threading choice: if we're using fftw3_threads
+  # (or fftw3_omp) for double, link the corresponding fftw3f_threads /
+  # fftw3f_omp for consistency. Fall through silently if the matching
+  # threaded variant isn't installed.
+  if(PARAFAFT_FFTW_THREADING STREQUAL "Threads" AND FFTW3F_THREADS_LIB)
+    list(APPEND PARAFAFT_LINK_LIBRARIES ${FFTW3F_THREADS_LIB})
+    message(STATUS "FFTW3F: Linking with libfftw3f_threads")
+  elseif(PARAFAFT_FFTW_THREADING STREQUAL "OpenMP" AND FFTW3F_OMP_LIB)
+    list(APPEND PARAFAFT_LINK_LIBRARIES ${FFTW3F_OMP_LIB})
+    message(STATUS "FFTW3F: Linking with libfftw3f_omp")
+  endif()
+  list(APPEND PARAFAFT_LINK_LIBRARIES ${FFTW3F_LIB})
+  target_compile_definitions(parafaft INTERFACE PARAFAFT_FFTW3F_AVAILABLE)
+  message(STATUS "FFTW3F: single-precision FFTW found — FFTWBackend<float> enabled")
+else()
+  message(STATUS "FFTW3F: libfftw3f not found — FFTWBackend<float> will be unavailable")
+endif()
+
 # Expose threading mode to code via preprocessor
 if(PARAFAFT_FFTW_THREADING STREQUAL "Threads")
   target_compile_definitions(parafaft INTERFACE PARAFAFT_FFTW_THREADS)

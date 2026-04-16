@@ -4,7 +4,7 @@
 // Usage:  mpirun -np <P> ./test_hipfft_c2c_nd_float [N] [D] [S]
 //
 // Mirrors test_hipfft_c2c_nd.hip but instantiates
-//   parafaft::ParaFaFT_C2C<D, parafaft::HipFFTBackend<float>, float>
+//   parafaft::ParaFaFT_C2C<D, parafaft::HipFFTBackend<float>>
 // to verify that the HIPFFT_C2C / R2C / C2R plan paths are wired end-to-end.
 // ============================================================================
 
@@ -36,7 +36,7 @@ template <int D> int compare_hipFFTBackend_float(const int N, int rank, int shap
 
   std::array<int, D> global_shape;
   global_shape.fill(N);
-  parafaft::ParaFaFT_C2C<D, parafaft::HipFFTBackend<float>, float> fft(
+  parafaft::ParaFaFT_C2C<D, parafaft::HipFFTBackend<float>> fft(
       global_shape.data());
 
   int local_size = fft.get_local_size();

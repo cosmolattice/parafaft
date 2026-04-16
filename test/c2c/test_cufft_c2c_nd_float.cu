@@ -4,7 +4,7 @@
 // Usage:  mpirun -np <P> ./test_cufft_c2c_nd_float [N] [D] [S]
 //
 // Mirrors test_cufft_c2c_nd.cu but instantiates
-//   parafaft::ParaFaFT_C2C<D, parafaft::CuFFTBackend<float>, float>
+//   parafaft::ParaFaFT_C2C<D, parafaft::CuFFTBackend<float>>
 // to verify that the CUFFT_C2C / R2C / C2R plan paths are wired end-to-end.
 //
 // The reference FFT is computed in double precision on host via FFTW;
@@ -40,7 +40,7 @@ template <int D> int compare_cuFFTBackend_float(const int N, int rank, int shape
 
   std::array<int, D> global_shape;
   global_shape.fill(N);
-  parafaft::ParaFaFT_C2C<D, parafaft::CuFFTBackend<float>, float> fft(
+  parafaft::ParaFaFT_C2C<D, parafaft::CuFFTBackend<float>> fft(
       global_shape.data());
 
   int local_size = fft.get_local_size();

@@ -9,15 +9,16 @@ ParaFaFT (**Para**llel **Fa**st **F**ourier **T**ransform) provides a C++ implem
 
 - **Dimension-agnostic**: Generic template supports arbitrary dimensions $D \geq 2$.
 - **C2C and R2C/C2R**:
-  - `parafaft_c2c.hpp`: Provides through `ParaFaFT<D>`, complex fourier transforms for arbitrary dimensions.
+  - `parafaft_c2c.hpp`: Provides through `ParaFaFT_C2C<D>`, complex fourier transforms for arbitrary dimensions.
   - `parafaft_r2c.hpp`: Provides through `ParaFaFT_R2C<D>`, real-to-complex and complex-to-real transforms with memory-efficient layouts.
+- **Single and double precision**: Precision is selected via the backend template parameter (e.g. `FFTWBackend<float>` vs the default `FFTWBackend<>`); all backends support both. Single-precision FFTW additionally requires `libfftw3f` at configure time.
 - **No local transposes**: Uses MPI subarray datatypes with `MPI_Alltoallw` to eliminate local data rearrangements
 - **GPU peer-to-peer exchanges**: On GPU backends, inter-process data redistribution uses CUDA/HIP IPC for same-node GPU peers, falling back to point-to-point MPI for cross-node neighbors — avoiding `MPI_Alltoallw` overhead on GPUs entirely
 - **Supported FFT backends**:
   - **FFTW3**: CPU-based FFT operations (default)
   - **cuFFT**: NVIDIA GPU acceleration via CUDA
   - **hipFFT**: AMD GPU acceleration via ROCm/HIP
-- **User-friendly API**: Simple `ParaFaFT<D>` and `ParaFaFT_R2C<D>` template interfaces.
+- **User-friendly API**: Simple `ParaFaFT_C2C<D>` and `ParaFaFT_R2C<D>` template interfaces.
 
 ## Quick Start
 
@@ -37,11 +38,12 @@ For GPU support, see the [Building with CMake](#building-with-cmake) section bel
 ## Requirements
 
 - MPI implementation (OpenMPI, MPICH, etc.)
-- FFTW3 library
+- FFTW3 library (double precision, always required)
 - C++17 compatible compiler
 - CMake 3.19+
 
 optional:
+- `libfftw3f` (single-precision FFTW) — enables `FFTWBackend<float>`
 - CUDA Toolkit (for NVIDIA GPU support)
 - ROCm/HIP with hipFFT(for AMD GPU support)
 
@@ -125,7 +127,7 @@ int main(int argc, char** argv) {
 
     // Works for any dimension!
     const int global_shape[3] = {32, 32, 32};
-    parafaft::ParaFaFT<3> fft(global_shape);
+    parafaft::ParaFaFT_C2C<3> fft(global_shape);
 
     // Allocate local data
     const int local_size = fft.get_local_size();
@@ -151,6 +153,18 @@ int main(int argc, char** argv) {
     return 0;
 }
 ```
+
+#### Single precision
+
+To run the transform in single precision, instantiate with a float backend — no third template argument is needed, the precision is deduced from the backend:
+
+```cpp
+parafaft::ParaFaFT_C2C<3, parafaft::FFTWBackend<float>> fft(global_shape);
+std::vector<std::complex<float>> data(local_size);
+const float scale = 1.0f / (global_shape[0] * global_shape[1] * global_shape[2]);
+```
+
+The same pattern applies to the cuFFT and hipFFT backends (`CuFFTBackend<float>`, `HipFFTBackend<float>`). The FFTW path additionally requires `libfftw3f` at configure time.
 
 ### Real-to-Complex (R2C) / Complex-to-Real (C2R) Transform
 
@@ -192,6 +206,16 @@ int main(int argc, char** argv) {
     MPI_Finalize();
     return 0;
 }
+```
+
+#### Single precision
+
+As with C2C, switch to float by parameterising the backend:
+
+```cpp
+parafaft::ParaFaFT_R2C<3, parafaft::FFTWBackend<float>> fft(global_shape);
+std::vector<float> real_data(local_padded_size);
+const float scale = 1.0f / (global_shape[0] * global_shape[1] * global_shape[2]);
 ```
 
 ## Key Algorithm Details
@@ -249,11 +273,12 @@ In general, ParaFaFT follows the same memory layout as FFTW for R2C/C2R transfor
 ## FFT Backends
 
 ##### `fft_backend_fftw.hpp` (CPU)
-FFTW3 backend for CPU-based operations, always available.
+FFTW3 backend for CPU-based operations, always available. Supports both `FFTWBackend<double>` (always) and `FFTWBackend<float>` (enabled automatically when `libfftw3f` is found at configure time).
 
 ##### `fft_backend_cufft.hpp` (NVIDIA GPU)
 cuFFT backend for NVIDIA GPU acceleration:
 - Requires CUDA Toolkit and cuFFT library
+- Supports both `CuFFTBackend<double>` and `CuFFTBackend<float>`
 - Includes `cuvector<T>` device memory wrapper
 - Uses CUDA IPC for peer-to-peer exchanges between GPUs on the same node
 - Enable with `-DPARAFAFT_CUDA=ON`
@@ -261,6 +286,7 @@ cuFFT backend for NVIDIA GPU acceleration:
 ##### `fft_backend_hipfft.hpp` (AMD GPU)
 hipFFT backend for AMD GPU acceleration:
 - Requires ROCm and hipFFT library
+- Supports both `HipFFTBackend<double>` and `HipFFTBackend<float>`
 - Includes `hipvector<T>` device memory wrapper
 - Uses HIP IPC for peer-to-peer exchanges between GPUs on the same node
 - Enable with `-DPARAFAFT_HIP=ON`

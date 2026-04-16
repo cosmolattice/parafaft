@@ -4,7 +4,7 @@
 // Usage:  mpirun -np <P> ./test_fftw_c2c_nd_float [N] [D] [S]
 //
 // Mirrors test_fftw_c2c_nd.cpp but instantiates
-//   parafaft::ParaFaFT_C2C<D, parafaft::FFTWBackend<float>, float>
+//   parafaft::ParaFaFT_C2C<D, parafaft::FFTWBackend<float>>
 // to verify that the single-precision FFTW path is wired end-to-end.
 //
 // The reference FFT is computed in double precision; inputs and local
@@ -45,7 +45,7 @@ template <int D> int compare_fftwBackend_float(const int N, int rank, int shape_
   // ParaFaFT setup at float precision.
   std::array<int, D> global_shape;
   global_shape.fill(N);
-  parafaft::ParaFaFT_C2C<D, parafaft::FFTWBackend<float>, float> fft(
+  parafaft::ParaFaFT_C2C<D, parafaft::FFTWBackend<float>> fft(
       global_shape.data());
 
   int buffer_size = fft.get_required_output_size();
