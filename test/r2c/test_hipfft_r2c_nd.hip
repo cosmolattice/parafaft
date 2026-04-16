@@ -50,7 +50,7 @@ template <int D> int compare_hipFFTBackend(const int N, int rank, int shape_id)
   // ---- ParaFaFT setup -------------------------------------------------------
   std::array<int, D> global_shape;
   global_shape.fill(N);
-  parafaft::ParaFaFT_R2C<D, parafaft::HipFFTBackend> fft(global_shape.data());
+  parafaft::ParaFaFT_R2C<D, parafaft::HipFFTBackend<>> fft(global_shape.data());
 
   int local_real_shape[D], real_start[D];
   int local_complex_shape[D], complex_start[D];
@@ -105,8 +105,8 @@ template <int D> int compare_hipFFTBackend(const int N, int rank, int shape_id)
   hipMemcpy(d_data, local_data.data(), local_real_size * sizeof(double), hipMemcpyHostToDevice);
 
   // Allocate device memory for complex output
-  parafaft::HipFFTBackend::Complex *d_result = nullptr;
-  hipMalloc((void **)&d_result, (local_real_size / 2) * sizeof(parafaft::HipFFTBackend::Complex));
+  parafaft::HipFFTBackend<>::Complex *d_result = nullptr;
+  hipMalloc((void **)&d_result, (local_real_size / 2) * sizeof(parafaft::HipFFTBackend<>::Complex));
 
   // ---- Forward FFT ----------------------------------------------------------
   fft.forward(d_data, d_result);

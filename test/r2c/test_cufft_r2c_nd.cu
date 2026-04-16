@@ -50,7 +50,7 @@ template <int D> int compare_cuFFTBackend(const int N, int rank, int shape_id)
   // ---- ParaFaFT setup -------------------------------------------------------
   std::array<int, D> global_shape;
   global_shape.fill(N);
-  parafaft::ParaFaFT_R2C<D, parafaft::CuFFTBackend> fft(global_shape.data());
+  parafaft::ParaFaFT_R2C<D, parafaft::CuFFTBackend<>> fft(global_shape.data());
 
   int local_real_shape[D], real_start[D];
   int local_complex_shape[D], complex_start[D];
@@ -105,8 +105,8 @@ template <int D> int compare_cuFFTBackend(const int N, int rank, int shape_id)
   cudaMemcpy(d_data, local_data.data(), local_real_size * sizeof(double), cudaMemcpyHostToDevice);
 
   // Allocate device memory for complex output
-  parafaft::CuFFTBackend::Complex *d_result = nullptr;
-  cudaMalloc((void **)&d_result, (local_real_size / 2) * sizeof(parafaft::CuFFTBackend::Complex));
+  parafaft::CuFFTBackend<>::Complex *d_result = nullptr;
+  cudaMalloc((void **)&d_result, (local_real_size / 2) * sizeof(parafaft::CuFFTBackend<>::Complex));
 
   // ---- Forward FFT ----------------------------------------------------------
   fft.forward(d_data, d_result);

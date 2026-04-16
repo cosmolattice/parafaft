@@ -45,6 +45,15 @@ target_link_libraries(test_fftw_backend parafaft::parafaft)
 set_target_properties(test_fftw_backend PROPERTIES RUNTIME_OUTPUT_DIRECTORY
                                                    ${CMAKE_BINARY_DIR}/unit)
 
+# Single-precision smoke test (only when libfftw3f was found)
+if(PARAFAFT_FFTW3F_AVAILABLE)
+  add_executable(test_fftw_c2c_nd_float c2c/test_fftw_c2c_nd_float.cpp)
+  target_link_libraries(test_fftw_c2c_nd_float parafaft::parafaft)
+  set_target_properties(
+    test_fftw_c2c_nd_float PROPERTIES RUNTIME_OUTPUT_DIRECTORY
+                                      ${CMAKE_BINARY_DIR}/c2c)
+endif()
+
 # ##############################################################################
 # cuFFT Backend Tests
 # ##############################################################################
@@ -87,6 +96,14 @@ if(PARAFAFT_CUDA)
   set_target_properties(test_cufft_backend PROPERTIES RUNTIME_OUTPUT_DIRECTORY
                                                       ${CMAKE_BINARY_DIR}/unit)
   parafaft_enable_cuda_sources(test_cufft_backend)
+
+  # Single-precision C2C smoke test
+  add_executable(test_cufft_c2c_nd_float c2c/test_cufft_c2c_nd_float.cu)
+  target_link_libraries(test_cufft_c2c_nd_float parafaft::parafaft)
+  set_target_properties(
+    test_cufft_c2c_nd_float PROPERTIES RUNTIME_OUTPUT_DIRECTORY
+                                       ${CMAKE_BINARY_DIR}/c2c)
+  parafaft_enable_cuda_sources(test_cufft_c2c_nd_float)
 endif()
 
 # ##############################################################################
@@ -122,6 +139,13 @@ if(PARAFAFT_HIP)
   target_link_libraries(test_hipfft_backend parafaft::parafaft)
   set_target_properties(test_hipfft_backend PROPERTIES RUNTIME_OUTPUT_DIRECTORY
                                                        ${CMAKE_BINARY_DIR}/unit)
+
+  # Single-precision C2C smoke test
+  add_executable(test_hipfft_c2c_nd_float c2c/test_hipfft_c2c_nd_float.hip)
+  target_link_libraries(test_hipfft_c2c_nd_float parafaft::parafaft)
+  set_target_properties(
+    test_hipfft_c2c_nd_float PROPERTIES RUNTIME_OUTPUT_DIRECTORY
+                                        ${CMAKE_BINARY_DIR}/c2c)
 endif()
 
 # ##############################################################################
@@ -256,6 +280,11 @@ add_mpi_tests_varn_vard(
   fftw_r2c_padded_roundtrip_nd r2c/test_fftw_r2c_padded_roundtrip_nd
   test_fftw_r2c_padded_roundtrip_nd)
 
+if(PARAFAFT_FFTW3F_AVAILABLE)
+  add_mpi_tests_varn_vard(fftw_c2c_nd_float c2c/test_fftw_c2c_nd_float
+                          test_fftw_c2c_nd_float)
+endif()
+
 # cuFFT tests (only added if CUDA is enabled)
 if(PARAFAFT_CUDA)
   add_serial_tests(cufft_unit_backend unit/test_cufft_backend
@@ -267,6 +296,9 @@ if(PARAFAFT_CUDA)
   add_mpi_tests_varn_vard(cufft_r2c_nd r2c/test_cufft_r2c_nd test_cufft_r2c_nd)
   add_mpi_tests_varn_vard(cufft_r2c_padded_nd r2c/test_cufft_r2c_padded_nd
                           test_cufft_r2c_padded_nd)
+
+  add_mpi_tests_varn_vard(cufft_c2c_nd_float c2c/test_cufft_c2c_nd_float
+                          test_cufft_c2c_nd_float)
 endif()
 
 # cuFFTMp tests (only added if CUDA + cuFFTMp enabled)
@@ -323,4 +355,7 @@ if(PARAFAFT_HIP)
                           test_hipfft_r2c_nd)
   add_mpi_tests_varn_vard(hipfft_r2c_padded_nd r2c/test_hipfft_r2c_padded_nd
                           test_hipfft_r2c_padded_nd)
+
+  add_mpi_tests_varn_vard(hipfft_c2c_nd_float c2c/test_hipfft_c2c_nd_float
+                          test_hipfft_c2c_nd_float)
 endif()

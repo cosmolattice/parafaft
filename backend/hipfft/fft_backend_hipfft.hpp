@@ -6,6 +6,10 @@
  * FFT operations. Supports C2C, R2C, and C2R transforms as required by
  * ParaFaFT and ParaFaFT_R2C.
  *
+ * Precision: HipFFTBackend is a class template parameterised on FloatType.
+ *   - HipFFTBackend<double> (default) uses HIPFFT_Z2Z / HIPFFT_D2Z / HIPFFT_Z2D.
+ *   - HipFFTBackend<float>  uses HIPFFT_C2C / HIPFFT_R2C / HIPFFT_C2R.
+ *
  * @note Requires ROCm toolkit and hipFFT library.
  */
 
@@ -113,20 +117,73 @@ private:
 };
 
 /**
+ * @brief Precision-specific hipFFT type/plan/exec mapping.
+ *
+ * Routes HipFFTBackend<FloatType> to the right hipFFT plan constants
+ * (HIPFFT_Z2Z / D2Z / Z2D for double; HIPFFT_C2C / R2C / C2R for float)
+ * and the right device complex/real types and exec functions.
+ */
+template <typename T> struct hipfft_traits;
+
+template <> struct hipfft_traits<double> {
+  using real_t = hipfftDoubleReal;
+  using complex_t = hipfftDoubleComplex;
+  static constexpr hipfftType c2c_type = HIPFFT_Z2Z;
+  static constexpr hipfftType r2c_type = HIPFFT_D2Z;
+  static constexpr hipfftType c2r_type = HIPFFT_Z2D;
+  static hipfftResult exec_c2c(hipfftHandle p, complex_t *in, complex_t *out, int dir) {
+    return hipfftExecZ2Z(p, in, out, dir);
+  }
+  static hipfftResult exec_r2c(hipfftHandle p, real_t *in, complex_t *out) {
+    return hipfftExecD2Z(p, in, out);
+  }
+  static hipfftResult exec_c2r(hipfftHandle p, complex_t *in, real_t *out) {
+    return hipfftExecZ2D(p, in, out);
+  }
+};
+
+template <> struct hipfft_traits<float> {
+  using real_t = hipfftReal;
+  using complex_t = hipfftComplex;
+  static constexpr hipfftType c2c_type = HIPFFT_C2C;
+  static constexpr hipfftType r2c_type = HIPFFT_R2C;
+  static constexpr hipfftType c2r_type = HIPFFT_C2R;
+  static hipfftResult exec_c2c(hipfftHandle p, complex_t *in, complex_t *out, int dir) {
+    return hipfftExecC2C(p, in, out, dir);
+  }
+  static hipfftResult exec_r2c(hipfftHandle p, real_t *in, complex_t *out) {
+    return hipfftExecR2C(p, in, out);
+  }
+  static hipfftResult exec_c2r(hipfftHandle p, complex_t *in, real_t *out) {
+    return hipfftExecC2R(p, in, out);
+  }
+};
+
+/**
  * @brief hipFFT backend for AMD GPU-accelerated FFT operations.
  *
  * Provides an interface compatible with ParaFaFT for executing FFT transforms
  * on AMD GPUs using hipFFT. Supports C2C, R2C, and C2R transforms.
  *
+ * @tparam FloatType Precision of the transform: `double` (default, uses
+ *         HIPFFT_Z2Z / D2Z / Z2D) or `float` (uses HIPFFT_C2C / R2C / C2R).
+ *
  * Memory management: Uses hipvector for device memory allocation.
  * All data pointers passed to this backend must be device pointers.
  */
+template <typename FloatTypeT = double>
 class HipFFTBackend {
 public:
-  using Complex = hipDoubleComplex; ///< Complex number type
-  using Buffer = hipvector<double>; ///< Real buffer type (device memory)
-  using ComplexBuffer =
-      hipvector<Complex>; ///< Complex buffer type (device memory)
+  using FloatType = FloatTypeT;                                      ///< Scalar floating-point type
+  using Complex = typename hipfft_traits<FloatType>::complex_t;      ///< Complex number type
+  using Buffer = hipvector<FloatType>;                               ///< Real buffer type (device memory)
+  using ComplexBuffer = hipvector<Complex>;                          ///< Complex buffer type (device memory)
+private:
+  using traits = hipfft_traits<FloatType>;
+  using hipfft_real_t = typename traits::real_t;
+  using hipfft_complex_t = typename traits::complex_t;
+
+public:
 
   /**
    * @brief Construct a hipFFT backend with storage for the given number of
@@ -242,13 +299,13 @@ public:
 
     // Create forward plan
     check_hipfft(hipfftPlanMany(&forward_plans_[stage], 1, n, inembed, stride,
-                                dist, onembed, stride, dist, HIPFFT_Z2Z, batch),
+                                dist, onembed, stride, dist, traits::c2c_type, batch),
                  "hipfftPlanMany C2C forward");
     hipfftSetStream(forward_plans_[stage], stream_);
 
     // Create backward plan
     check_hipfft(hipfftPlanMany(&backward_plans_[stage], 1, n, inembed, stride,
-                                dist, onembed, stride, dist, HIPFFT_Z2Z, batch),
+                                dist, onembed, stride, dist, traits::c2c_type, batch),
                  "hipfftPlanMany C2C backward");
     hipfftSetStream(backward_plans_[stage], stream_);
   }
@@ -270,12 +327,12 @@ public:
                             : backward_plans_[stage];
     int hipfft_direction =
         (direction == FFTDirection::Forward) ? HIPFFT_FORWARD : HIPFFT_BACKWARD;
-    hipfftDoubleComplex *hipfft_data =
-        reinterpret_cast<hipfftDoubleComplex *>(data);
+    hipfft_complex_t *hipfft_data =
+        reinterpret_cast<hipfft_complex_t *>(data);
 
     check_hipfft(
-        hipfftExecZ2Z(plan, hipfft_data, hipfft_data, hipfft_direction),
-        "hipfftExecZ2Z");
+        traits::exec_c2c(plan, hipfft_data, hipfft_data, hipfft_direction),
+        "hipfftExecC2C/Z2Z");
   }
 
   // ========== R2C In-Place Transform Methods ==========
@@ -295,16 +352,17 @@ public:
    * @param padded_real Device pointer to padded real buffer (for size
    * calculation only)
    * @param stride Element stride (typically 1 for contiguous data)
-   * @param dist Distance between batches in doubles (should be 2*(N/2+1) for
+   * @param dist Distance between batches in FloatType scalars (should be 2*(N/2+1) for
    * in-place)
    */
   void create_r2c_inplace_plan(
-      int length,          // Real-space FFT length N
-      int batch,           // Number of 1D transforms
-      double *padded_real, // Padded real buffer (for size calculation only)
-      int stride,          // Stride (typically 1)
-      int dist             // Distance between batches (2*(N/2+1) doubles)
+      int length,              // Real-space FFT length N
+      int batch,               // Number of 1D transforms
+      FloatType *padded_real,  // Padded real buffer (for size calculation only)
+      int stride,              // Stride (typically 1)
+      int dist                 // Distance between batches (2*(N/2+1) scalars)
   ) {
+    (void)padded_real;
     // R2C: N real inputs -> N/2+1 complex outputs
     // IMPORTANT: Unlike FFTW, hipFFT ignores stride/dist when inembed/onembed
     // are NULL! We must explicitly set inembed/onembed to match FFTW behavior.
@@ -312,12 +370,12 @@ public:
     int inembed[] = {length};         // Real input embed = N
     int onembed[] = {length / 2 + 1}; // Complex output embed = N/2+1
 
-    // Note: output dist is half of input dist (complex elements vs doubles)
+    // Note: output dist is half of input dist (complex elements vs scalars)
     check_hipfft(hipfftPlanMany(&r2c_plan_, 1, n, inembed, stride,
                                 dist, // Real input layout
                                 onembed, stride,
                                 dist / 2, // Complex output layout
-                                HIPFFT_D2Z, batch),
+                                traits::r2c_type, batch),
                  "hipfftPlanMany R2C");
     hipfftSetStream(r2c_plan_, stream_);
   }
@@ -326,22 +384,21 @@ public:
    * @brief Execute in-place R2C transform.
    *
    * Transforms real data to complex data in-place on GPU. The device buffer
-   * must be padded (2*(N/2+1) doubles per row) to accommodate the complex
+   * must be padded (2*(N/2+1) FloatType scalars per row) to accommodate the complex
    * output. Synchronizes the device after execution.
    *
    * @param device_padded_real Device pointer to padded real input buffer
    * (overwritten with complex output)
    */
-  void execute_r2c_inplace(double *device_padded_real) {
-    hipfftDoubleReal *input_data =
-        reinterpret_cast<hipfftDoubleReal *>(device_padded_real);
-    hipfftDoubleComplex *output_data =
-        reinterpret_cast<hipfftDoubleComplex *>(device_padded_real);
+  void execute_r2c_inplace(FloatType *device_padded_real) {
+    hipfft_real_t *input_data =
+        reinterpret_cast<hipfft_real_t *>(device_padded_real);
+    hipfft_complex_t *output_data =
+        reinterpret_cast<hipfft_complex_t *>(device_padded_real);
 
-    // Execute R2C (D2Z = double to Z complex)
     // In-place: output overwrites input buffer
-    check_hipfft(hipfftExecD2Z(r2c_plan_, input_data, output_data),
-                 "hipfftExecD2Z");
+    check_hipfft(traits::exec_r2c(r2c_plan_, input_data, output_data),
+                 "hipfftExecR2C/D2Z");
   }
 
   // ========== C2R In-Place Transform Methods ==========
@@ -361,14 +418,15 @@ public:
    * @param batch Number of 1D transforms to execute in batch
    * @param padded_real Device pointer to padded buffer
    * @param stride Element stride (typically 1 for contiguous data)
-   * @param dist Distance between batches (padded: 2*(N/2+1) doubles)
+   * @param dist Distance between batches (padded: 2*(N/2+1) scalars)
    */
-  void create_c2r_inplace_plan(int length, // Real-space output length N
-                               int batch,  // Number of transforms
-                               double *padded_real, // Padded real buffer
-                               int stride,          // Stride (typically 1)
-                               int dist // Distance between batches (2*(N/2+1))
+  void create_c2r_inplace_plan(int length,              // Real-space output length N
+                               int batch,               // Number of transforms
+                               FloatType *padded_real,  // Padded real buffer
+                               int stride,              // Stride (typically 1)
+                               int dist                 // Distance between batches (2*(N/2+1))
   ) {
+    (void)padded_real;
     // C2R: N/2+1 complex inputs -> N real outputs
     // IMPORTANT: Unlike FFTW, hipFFT ignores stride/dist when inembed/onembed
     // are NULL! We must explicitly set inembed/onembed to match FFTW behavior.
@@ -379,7 +437,7 @@ public:
     check_hipfft(hipfftPlanMany(&c2r_plan_, 1, n, inembed, stride,
                                 dist / 2,              // Complex input layout
                                 onembed, stride, dist, // Real output layout
-                                HIPFFT_Z2D, batch),
+                                traits::c2r_type, batch),
                  "hipfftPlanMany C2R");
     hipfftSetStream(c2r_plan_, stream_);
   }
@@ -394,15 +452,14 @@ public:
    * @param device_padded_real Device pointer to buffer (complex input, real
    * output)
    */
-  void execute_c2r_inplace(double *device_padded_real) {
-    hipfftDoubleComplex *input_data =
-        reinterpret_cast<hipfftDoubleComplex *>(device_padded_real);
-    hipfftDoubleReal *output_data =
-        reinterpret_cast<hipfftDoubleReal *>(device_padded_real);
+  void execute_c2r_inplace(FloatType *device_padded_real) {
+    hipfft_complex_t *input_data =
+        reinterpret_cast<hipfft_complex_t *>(device_padded_real);
+    hipfft_real_t *output_data =
+        reinterpret_cast<hipfft_real_t *>(device_padded_real);
 
-    // Execute C2R (Z2D = Z complex to double)
-    check_hipfft(hipfftExecZ2D(c2r_plan_, input_data, output_data),
-                 "hipfftExecZ2D");
+    check_hipfft(traits::exec_c2r(c2r_plan_, input_data, output_data),
+                 "hipfftExecC2R/Z2D");
   }
 
   /**

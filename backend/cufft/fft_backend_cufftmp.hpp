@@ -69,6 +69,7 @@ class CuFFTMpBackend {
                 "CuFFTMpBackend only supports 2D and 3D transforms");
 
 public:
+  using FloatType = double; ///< cuFFTMp backend is currently double-precision only
   using Complex = cuda::std::complex<double>;
   using Buffer = cuvector<double>;
   using ComplexBuffer = cuvector<Complex>;

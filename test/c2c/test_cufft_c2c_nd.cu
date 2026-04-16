@@ -51,7 +51,7 @@ template <int D> int compare_cuFFTBackend(const int N, int rank, int shape_id) {
   // ---- ParaFaFT setup -------------------------------------------------------
   std::array<int, D> global_shape;
   global_shape.fill(N);
-  parafaft::ParaFaFT_C2C<D, parafaft::CuFFTBackend> fft(global_shape.data());
+  parafaft::ParaFaFT_C2C<D, parafaft::CuFFTBackend<>> fft(global_shape.data());
 
   int local_size = fft.get_local_size();
   int local_shape[D];
@@ -79,11 +79,11 @@ template <int D> int compare_cuFFTBackend(const int N, int rank, int shape_id) {
   std::cout << std::endl;
 
   // ---- Copy to device -------------------------------------------------------
-  parafaft::CuFFTBackend::Complex *d_data = nullptr;
+  parafaft::CuFFTBackend<>::Complex *d_data = nullptr;
   cudaMalloc((void **)&d_data,
-             local_size * sizeof(parafaft::CuFFTBackend::Complex));
+             local_size * sizeof(parafaft::CuFFTBackend<>::Complex));
   cudaMemcpy(d_data, local_data.data(),
-             local_size * sizeof(parafaft::CuFFTBackend::Complex),
+             local_size * sizeof(parafaft::CuFFTBackend<>::Complex),
              cudaMemcpyHostToDevice);
 
   // ---- Forward FFT ----------------------------------------------------------
@@ -96,7 +96,7 @@ template <int D> int compare_cuFFTBackend(const int N, int rank, int shape_id) {
   fft.get_final_start(final_start);
 
   cudaMemcpy(local_data.data(), d_data,
-             local_size * sizeof(parafaft::CuFFTBackend::Complex),
+             local_size * sizeof(parafaft::CuFFTBackend<>::Complex),
              cudaMemcpyDeviceToHost);
   cudaFree(d_data);
 

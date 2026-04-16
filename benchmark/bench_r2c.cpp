@@ -28,7 +28,7 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
   Statistics fftw_stats;
 
   {
-    parafaft::ParaFaFT_R2C<D, parafaft::FFTWBackend> fft(global_shape.data());
+    parafaft::ParaFaFT_R2C<D, parafaft::FFTWBackend<>> fft(global_shape.data());
 
     int local_real_shape[D], real_start[D];
     fft.get_local_real_shape(local_real_shape);

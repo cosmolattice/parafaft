@@ -42,7 +42,7 @@ template <int D> int roundtrip_test(const int N, int rank, int shape_id)
   // ---- ParaFaFT setup -------------------------------------------------------
   std::array<int, D> global_shape;
   global_shape.fill(N);
-  parafaft::ParaFaFT_R2C<D, parafaft::FFTWBackend> fft(global_shape.data());
+  parafaft::ParaFaFT_R2C<D, parafaft::FFTWBackend<>> fft(global_shape.data());
 
   int local_real_shape[D], real_start[D];
   int local_complex_shape[D], complex_start[D];

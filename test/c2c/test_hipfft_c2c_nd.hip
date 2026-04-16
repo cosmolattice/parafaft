@@ -52,7 +52,7 @@ int compare_hipFFTBackend(const int N, int rank, int shape_id)
   // ---- ParaFaFT setup -------------------------------------------------------
   std::array<int, D> global_shape;
   global_shape.fill(N);
-  parafaft::ParaFaFT<D, parafaft::HipFFTBackend> fft(global_shape.data());
+  parafaft::ParaFaFT<D, parafaft::HipFFTBackend<>> fft(global_shape.data());
 
   int local_size = fft.get_local_size();
   int local_shape[D];
@@ -80,9 +80,9 @@ int compare_hipFFTBackend(const int N, int rank, int shape_id)
   std::cout << std::endl;
 
   // ---- Copy to device -------------------------------------------------------
-  parafaft::HipFFTBackend::Complex *d_data = nullptr;
-  hipMalloc((void **)&d_data, local_size * sizeof(parafaft::HipFFTBackend::Complex));
-  hipMemcpy(d_data, local_data.data(), local_size * sizeof(parafaft::HipFFTBackend::Complex), hipMemcpyHostToDevice);
+  parafaft::HipFFTBackend<>::Complex *d_data = nullptr;
+  hipMalloc((void **)&d_data, local_size * sizeof(parafaft::HipFFTBackend<>::Complex));
+  hipMemcpy(d_data, local_data.data(), local_size * sizeof(parafaft::HipFFTBackend<>::Complex), hipMemcpyHostToDevice);
 
   // ---- Forward FFT ----------------------------------------------------------
   fft.forward(d_data);
@@ -93,7 +93,7 @@ int compare_hipFFTBackend(const int N, int rank, int shape_id)
   fft.get_final_shape(final_shape);
   fft.get_final_start(final_start);
 
-  hipMemcpy(local_data.data(), d_data, local_size * sizeof(parafaft::HipFFTBackend::Complex), hipMemcpyDeviceToHost);
+  hipMemcpy(local_data.data(), d_data, local_size * sizeof(parafaft::HipFFTBackend<>::Complex), hipMemcpyDeviceToHost);
   hipFree(d_data);
 
   // ---- Compare against reference --------------------------------------------

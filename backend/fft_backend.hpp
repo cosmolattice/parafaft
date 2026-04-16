@@ -53,10 +53,13 @@ namespace parafaft
    * @section types Required Type Definitions
    *
    * @code
-   * using Complex = ...;        // Complex number type (e.g., std::complex<double>)
-   * using Buffer = ...;         // Real buffer type (e.g., std::vector<double>)
-   * using ComplexBuffer = ...;  // Complex buffer type (e.g., std::vector<Complex>)
+   * using FloatType = ...;      // Scalar precision (double or float)
+   * using Complex = ...;        // Complex number type (e.g., std::complex<FloatType>)
+   * using Buffer = ...;         // Real buffer type (FloatType-valued)
+   * using ComplexBuffer = ...;  // Complex buffer type (Complex-valued)
    * @endcode
+   * FloatType is read by ParaFaFT_C2C/R2C to derive the matching MPI datatype
+   * and to type public real-buffer APIs.
    *
    * @section c2c_methods C2C Transform Methods (Required)
    *
@@ -74,18 +77,18 @@ namespace parafaft
    * @subsection create_stage_plan Plan Creation
    * @code
    * void create_stage_plan(
-   *     int stage,                   // Stage index (0 to num_stages-1)
-   *     int length,                  // FFT size (number of complex elements)
-   *     int batch,                   // Number of 1D transforms
-   *     std::complex<double>* data,  // Persistent data pointer for planning
-   *     int stride,                  // Element spacing within each FFT
-   *     int dist                     // Distance between consecutive FFTs
+   *     int stage,     // Stage index (0 to num_stages-1)
+   *     int length,    // FFT size (number of complex elements)
+   *     int batch,     // Number of 1D transforms
+   *     Complex* data, // Persistent data pointer for planning
+   *     int stride,    // Element spacing within each FFT
+   *     int dist       // Distance between consecutive FFTs
    * );
    * @endcode
    *
    * @subsection execute_stage Execution
    * @code
-   * void execute_stage(int stage, FFTDirection direction, std::complex<double>* data);
+   * void execute_stage(int stage, FFTDirection direction, Complex* data);
    * @endcode
    * Execute the pre-created plan for the specified stage and direction.
    *
@@ -113,38 +116,39 @@ namespace parafaft
    * @subsection r2c_plan R2C In-Place Plan Creation
    * @code
    * void create_r2c_inplace_plan(
-   *     int length,          // Real-space FFT length N
-   *     int batch,           // Number of 1D transforms
-   *     double* padded_real, // Padded real buffer (size 2*(N/2+1) per batch)
-   *     int stride,          // Element stride (typically 1)
-   *     int dist             // Distance between batches in doubles
+   *     int length,             // Real-space FFT length N
+   *     int batch,              // Number of 1D transforms
+   *     FloatType* padded_real, // Padded real buffer (size 2*(N/2+1) per batch)
+   *     int stride,             // Element stride (typically 1)
+   *     int dist                // Distance between batches, in FloatType scalars
    * );
    * @endcode
    *
    * @subsection r2c_exec R2C Execution
    * @code
-   * void execute_r2c_inplace(double* padded_real);
+   * void execute_r2c_inplace(FloatType* padded_real);
    * @endcode
    *
    * @subsection c2r_plan C2R In-Place Plan Creation
    * @code
    * void create_c2r_inplace_plan(
-   *     int length,          // Real-space output length N
-   *     int batch,           // Number of transforms
-   *     double* padded_real, // Padded real buffer
-   *     int stride,          // Element stride
-   *     int dist             // Distance between batches
+   *     int length,             // Real-space output length N
+   *     int batch,              // Number of transforms
+   *     FloatType* padded_real, // Padded real buffer
+   *     int stride,             // Element stride
+   *     int dist                // Distance between batches
    * );
    * @endcode
    *
    * @subsection c2r_exec C2R Execution
    * @code
-   * void execute_c2r_inplace(double* padded_real);
+   * void execute_c2r_inplace(FloatType* padded_real);
    * @endcode
    *
    * @note R2C transforms produce N/2+1 complex values from N real values.
    *       C2R transforms produce N real values from N/2+1 complex values.
-   *       In-place transforms require padded buffers with 2*(N/2+1) doubles per row.
+   *       In-place transforms require padded buffers with 2*(N/2+1) scalars of
+   *       FloatType per row.
    *
    * @section distributed Distributed Transform Extension (Optional)
    *
@@ -172,8 +176,8 @@ namespace parafaft
    * DistributedInfo get_distributed_info() const;
    *
    * // Buffer management — backend allocates optimized memory (e.g. NVSHMEM)
-   * Complex* get_buffer();         // device pointer to internal buffer
-   * double* get_real_buffer();     // for R2C: same buffer as double*
+   * Complex* get_buffer();           // device pointer to internal buffer
+   * FloatType* get_real_buffer();    // for R2C: same buffer as FloatType*
    *
    * // In-place transforms on internal buffer (zero-copy)
    * void forward();               // C2C forward

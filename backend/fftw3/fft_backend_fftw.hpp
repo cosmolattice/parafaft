@@ -6,6 +6,12 @@
  * FFT operations. Supports C2C, R2C, and C2R transforms as required by
  * ParaFaFT and ParaFaFT_R2C.
  *
+ * Precision: FFTWBackend is a class template parameterised on FloatType.
+ *   - FFTWBackend<double> (default) uses the double-precision fftw_* API
+ *   - FFTWBackend<float>  uses the single-precision fftwf_* API, only
+ *     available when PARAFAFT_FFTW3F_AVAILABLE is defined (set by CMake
+ *     when libfftw3f is found).
+ *
  * Threading Support:
  * - If compiled with PARAFAFT_FFTW_THREADS, uses libfftw3_threads (POSIX threads)
  * - If compiled with PARAFAFT_FFTW_OMP, uses fftw3_omp (OpenMP)
@@ -38,38 +44,143 @@ namespace parafaft
   };
 
   /**
+   * @brief Precision-specific FFTW symbol mapping.
+   *
+   * Routes FFTWBackend<FloatType> to the right FFTW symbol family
+   * (fftw_* for double, fftwf_* for float). The float specialization
+   * is only defined when libfftw3f was found at configure time
+   * (PARAFAFT_FFTW3F_AVAILABLE). Instantiating FFTWBackend<float>
+   * without that macro yields a clean "incomplete type" error.
+   */
+  template <typename T> struct fftw_traits;
+
+  template <> struct fftw_traits<double> {
+    using real_t = double;
+    using complex_t = fftw_complex;
+    using plan_t = fftw_plan;
+
+    static real_t *alloc_real(size_t n) { return fftw_alloc_real(n); }
+    static complex_t *alloc_complex(size_t n) { return fftw_alloc_complex(n); }
+    static void free_mem(void *p) { fftw_free(p); }
+
+    static int init_threads() { return fftw_init_threads(); }
+    static void plan_with_nthreads(int n) { fftw_plan_with_nthreads(n); }
+    static void cleanup_threads() { fftw_cleanup_threads(); }
+
+    static plan_t plan_many_dft(int rank, const int *n, int howmany, complex_t *in, const int *inembed,
+                                int istride, int idist, complex_t *out, const int *onembed, int ostride,
+                                int odist, int sign, unsigned flags) {
+      return fftw_plan_many_dft(rank, n, howmany, in, inembed, istride, idist, out, onembed, ostride,
+                                odist, sign, flags);
+    }
+    static plan_t plan_many_dft_r2c(int rank, const int *n, int howmany, real_t *in, const int *inembed,
+                                    int istride, int idist, complex_t *out, const int *onembed,
+                                    int ostride, int odist, unsigned flags) {
+      return fftw_plan_many_dft_r2c(rank, n, howmany, in, inembed, istride, idist, out, onembed,
+                                    ostride, odist, flags);
+    }
+    static plan_t plan_many_dft_c2r(int rank, const int *n, int howmany, complex_t *in, const int *inembed,
+                                    int istride, int idist, real_t *out, const int *onembed, int ostride,
+                                    int odist, unsigned flags) {
+      return fftw_plan_many_dft_c2r(rank, n, howmany, in, inembed, istride, idist, out, onembed, ostride,
+                                    odist, flags);
+    }
+    static void execute_dft(plan_t p, complex_t *in, complex_t *out) { fftw_execute_dft(p, in, out); }
+    static void execute_dft_r2c(plan_t p, real_t *in, complex_t *out) { fftw_execute_dft_r2c(p, in, out); }
+    static void execute_dft_c2r(plan_t p, complex_t *in, real_t *out) { fftw_execute_dft_c2r(p, in, out); }
+    static void destroy_plan(plan_t p) { fftw_destroy_plan(p); }
+
+    static int export_wisdom(const char *fn) { return fftw_export_wisdom_to_filename(fn); }
+    static int import_wisdom(const char *fn) { return fftw_import_wisdom_from_filename(fn); }
+    static void forget_wisdom() { fftw_forget_wisdom(); }
+  };
+
+#ifdef PARAFAFT_FFTW3F_AVAILABLE
+  template <> struct fftw_traits<float> {
+    using real_t = float;
+    using complex_t = fftwf_complex;
+    using plan_t = fftwf_plan;
+
+    static real_t *alloc_real(size_t n) { return fftwf_alloc_real(n); }
+    static complex_t *alloc_complex(size_t n) { return fftwf_alloc_complex(n); }
+    static void free_mem(void *p) { fftwf_free(p); }
+
+    static int init_threads() { return fftwf_init_threads(); }
+    static void plan_with_nthreads(int n) { fftwf_plan_with_nthreads(n); }
+    static void cleanup_threads() { fftwf_cleanup_threads(); }
+
+    static plan_t plan_many_dft(int rank, const int *n, int howmany, complex_t *in, const int *inembed,
+                                int istride, int idist, complex_t *out, const int *onembed, int ostride,
+                                int odist, int sign, unsigned flags) {
+      return fftwf_plan_many_dft(rank, n, howmany, in, inembed, istride, idist, out, onembed, ostride,
+                                 odist, sign, flags);
+    }
+    static plan_t plan_many_dft_r2c(int rank, const int *n, int howmany, real_t *in, const int *inembed,
+                                    int istride, int idist, complex_t *out, const int *onembed,
+                                    int ostride, int odist, unsigned flags) {
+      return fftwf_plan_many_dft_r2c(rank, n, howmany, in, inembed, istride, idist, out, onembed,
+                                     ostride, odist, flags);
+    }
+    static plan_t plan_many_dft_c2r(int rank, const int *n, int howmany, complex_t *in, const int *inembed,
+                                    int istride, int idist, real_t *out, const int *onembed, int ostride,
+                                    int odist, unsigned flags) {
+      return fftwf_plan_many_dft_c2r(rank, n, howmany, in, inembed, istride, idist, out, onembed, ostride,
+                                     odist, flags);
+    }
+    static void execute_dft(plan_t p, complex_t *in, complex_t *out) { fftwf_execute_dft(p, in, out); }
+    static void execute_dft_r2c(plan_t p, real_t *in, complex_t *out) { fftwf_execute_dft_r2c(p, in, out); }
+    static void execute_dft_c2r(plan_t p, complex_t *in, real_t *out) { fftwf_execute_dft_c2r(p, in, out); }
+    static void destroy_plan(plan_t p) { fftwf_destroy_plan(p); }
+
+    static int export_wisdom(const char *fn) { return fftwf_export_wisdom_to_filename(fn); }
+    static int import_wisdom(const char *fn) { return fftwf_import_wisdom_from_filename(fn); }
+    static void forget_wisdom() { fftwf_forget_wisdom(); }
+  };
+#endif // PARAFAFT_FFTW3F_AVAILABLE
+
+  /**
    * @class FFTWBackend
    * @brief FFTW3 backend for CPU-based FFT operations.
    *
    * Provides an interface compatible with ParaFaFT for executing FFT transforms
    * using FFTW3. Supports C2C, R2C, and C2R transforms with in-place operations.
    *
-   * Memory management: Uses std::vector for host memory allocation.
+   * @tparam FloatType Precision of the transform: `double` (always available)
+   *         or `float` (requires libfftw3f, detected via PARAFAFT_FFTW3F_AVAILABLE).
+   *
+   * Memory management: Uses FFTW's aligned allocators for host memory.
    * All data pointers passed to this backend must be host (CPU) pointers.
    *
    * @note FFTW plans are not copyable; this class is move-only.
    */
+  template <typename FloatTypeT = double>
   class FFTWBackend
   {
   public:
-    using Complex = std::complex<double>;       ///< Complex number type (CPU-compatible)
+    using FloatType = FloatTypeT;                    ///< Scalar floating-point type
+    using Complex = std::complex<FloatType>;          ///< Complex number type (CPU-compatible)
+  private:
+    using traits = fftw_traits<FloatType>;
+    using fftw_complex_t = typename traits::complex_t;
+    using fftw_plan_t = typename traits::plan_t;
+
+  public:
 
     /**
-     * @brief FFTW-aligned real buffer using fftw_alloc_real / fftw_free.
+     * @brief FFTW-aligned real buffer.
      *
      * Provides 16/32/64-byte alignment required for FFTW's SIMD codepaths
-     * (SSE2, AVX, AVX-512). std::vector's default allocator only guarantees
-     * alignof(max_align_t) which may be insufficient.
+     * (SSE2, AVX, AVX-512) via the precision-appropriate fftw(f)_alloc_real.
      */
     class AlignedBuffer {
-      double *data_ = nullptr;
+      FloatType *data_ = nullptr;
       size_t size_ = 0;
     public:
       AlignedBuffer() = default;
-      explicit AlignedBuffer(size_t n) : data_(fftw_alloc_real(n)), size_(n) {
+      explicit AlignedBuffer(size_t n) : data_(traits::alloc_real(n)), size_(n) {
         if (n > 0 && !data_) throw std::bad_alloc();
       }
-      ~AlignedBuffer() { if (data_) fftw_free(data_); }
+      ~AlignedBuffer() { if (data_) traits::free_mem(data_); }
       AlignedBuffer(const AlignedBuffer &) = delete;
       AlignedBuffer &operator=(const AlignedBuffer &) = delete;
       AlignedBuffer(AlignedBuffer &&other) noexcept
@@ -79,7 +190,7 @@ namespace parafaft
       }
       AlignedBuffer &operator=(AlignedBuffer &&other) noexcept {
         if (this != &other) {
-          if (data_) fftw_free(data_);
+          if (data_) traits::free_mem(data_);
           data_ = other.data_;
           size_ = other.size_;
           other.data_ = nullptr;
@@ -88,33 +199,33 @@ namespace parafaft
         return *this;
       }
       void resize(size_t n) {
-        if (data_) fftw_free(data_);
-        data_ = (n > 0) ? fftw_alloc_real(n) : nullptr;
+        if (data_) traits::free_mem(data_);
+        data_ = (n > 0) ? traits::alloc_real(n) : nullptr;
         size_ = n;
         if (n > 0 && !data_) throw std::bad_alloc();
       }
-      double *data() { return data_; }
-      const double *data() const { return data_; }
+      FloatType *data() { return data_; }
+      const FloatType *data() const { return data_; }
       size_t size() const { return size_; }
     };
 
     /**
-     * @brief FFTW-aligned complex buffer using fftw_alloc_complex / fftw_free.
+     * @brief FFTW-aligned complex buffer.
      *
      * Provides 16/32/64-byte alignment required for FFTW's SIMD codepaths.
-     * FFTW's new-array execute API (fftw_execute_dft) requires the runtime
-     * buffer to have the same alignment as the planning buffer — using this
-     * class for both ensures FFTW can select optimal SIMD plans.
+     * FFTW's new-array execute API requires the runtime buffer to have the
+     * same alignment as the planning buffer — using this class for both
+     * ensures FFTW can select optimal SIMD plans.
      */
     class AlignedComplexBuffer {
-      fftw_complex *data_ = nullptr;
+      fftw_complex_t *data_ = nullptr;
       size_t size_ = 0;
     public:
       AlignedComplexBuffer() = default;
-      explicit AlignedComplexBuffer(size_t n) : data_(fftw_alloc_complex(n)), size_(n) {
+      explicit AlignedComplexBuffer(size_t n) : data_(traits::alloc_complex(n)), size_(n) {
         if (n > 0 && !data_) throw std::bad_alloc();
       }
-      ~AlignedComplexBuffer() { if (data_) fftw_free(data_); }
+      ~AlignedComplexBuffer() { if (data_) traits::free_mem(data_); }
       AlignedComplexBuffer(const AlignedComplexBuffer &) = delete;
       AlignedComplexBuffer &operator=(const AlignedComplexBuffer &) = delete;
       AlignedComplexBuffer(AlignedComplexBuffer &&other) noexcept
@@ -124,7 +235,7 @@ namespace parafaft
       }
       AlignedComplexBuffer &operator=(AlignedComplexBuffer &&other) noexcept {
         if (this != &other) {
-          if (data_) fftw_free(data_);
+          if (data_) traits::free_mem(data_);
           data_ = other.data_;
           size_ = other.size_;
           other.data_ = nullptr;
@@ -133,8 +244,8 @@ namespace parafaft
         return *this;
       }
       void resize(size_t n) {
-        if (data_) fftw_free(data_);
-        data_ = (n > 0) ? fftw_alloc_complex(n) : nullptr;
+        if (data_) traits::free_mem(data_);
+        data_ = (n > 0) ? traits::alloc_complex(n) : nullptr;
         size_ = n;
         if (n > 0 && !data_) throw std::bad_alloc();
       }
@@ -158,14 +269,14 @@ namespace parafaft
     {
 #if defined(PARAFAFT_FFTW_THREADS)
       backend_type_ = FFTBackendType::Threads;
-      fftw_init_threads();
+      traits::init_threads();
       num_threads_ = detect_thread_count(MPI_COMM_SELF);
-      fftw_plan_with_nthreads(num_threads_);
+      traits::plan_with_nthreads(num_threads_);
 #elif defined(PARAFAFT_FFTW_OMP)
       backend_type_ = FFTBackendType::OpenMP;
-      fftw_init_threads();
+      traits::init_threads();
       num_threads_ = detect_thread_count(MPI_COMM_SELF);
-      fftw_plan_with_nthreads(num_threads_);
+      traits::plan_with_nthreads(num_threads_);
 #endif
     }
 
@@ -182,14 +293,14 @@ namespace parafaft
     {
 #if defined(PARAFAFT_FFTW_THREADS)
       backend_type_ = FFTBackendType::Threads;
-      fftw_init_threads();
+      traits::init_threads();
       num_threads_ = detect_thread_count(comm);
-      fftw_plan_with_nthreads(num_threads_);
+      traits::plan_with_nthreads(num_threads_);
 #elif defined(PARAFAFT_FFTW_OMP)
       backend_type_ = FFTBackendType::OpenMP;
-      fftw_init_threads();
+      traits::init_threads();
       num_threads_ = detect_thread_count(comm);
-      fftw_plan_with_nthreads(num_threads_);
+      traits::plan_with_nthreads(num_threads_);
 #else
       (void)comm; // Suppress unused parameter warning
 #endif
@@ -212,15 +323,15 @@ namespace parafaft
     void create_stage_plan(int stage, int length, int batch, Complex *data, int stride, int dist)
     {
       int n[] = {length};
-      fftw_complex *fftw_data = reinterpret_cast<fftw_complex *>(data);
+      fftw_complex_t *fftw_data = reinterpret_cast<fftw_complex_t *>(data);
 
       // Create forward plan (bound to data pointer)
-      forward_plans_[stage] = fftw_plan_many_dft(1, n, batch, fftw_data, NULL, stride, dist, fftw_data, NULL, stride,
-                                                 dist, FFTW_FORWARD, plan_flag_);
+      forward_plans_[stage] = traits::plan_many_dft(1, n, batch, fftw_data, NULL, stride, dist, fftw_data, NULL, stride,
+                                                    dist, FFTW_FORWARD, plan_flag_);
 
       // Create backward plan (bound to data pointer)
-      backward_plans_[stage] = fftw_plan_many_dft(1, n, batch, fftw_data, NULL, stride, dist, fftw_data, NULL, stride,
-                                                  dist, FFTW_BACKWARD, plan_flag_);
+      backward_plans_[stage] = traits::plan_many_dft(1, n, batch, fftw_data, NULL, stride, dist, fftw_data, NULL, stride,
+                                                     dist, FFTW_BACKWARD, plan_flag_);
     }
 
     /**
@@ -232,38 +343,38 @@ namespace parafaft
      *
      * @param length Real-space input length N (number of real values per transform)
      * @param batch Number of 1D transforms to execute in batch
-     * @param padded_real Host pointer to padded real buffer (2*(N/2+1) doubles per row)
+     * @param padded_real Host pointer to padded real buffer (2*(N/2+1) FloatType per row)
      * @param stride Element stride (typically 1 for contiguous data)
-     * @param dist Distance between batches in doubles (should be 2*(N/2+1) for in-place)
+     * @param dist Distance between batches in FloatType elements (should be 2*(N/2+1) for in-place)
      */
-    void create_r2c_inplace_plan(int length,          // Real-space input length N
-                                 int batch,           // Number of transforms
-                                 double *padded_real, // Padded real buffer
-                                 int stride,          // Stride
-                                 int dist             // Distance between batches (padded: 2*(N/2+1) doubles)
+    void create_r2c_inplace_plan(int length,              // Real-space input length N
+                                 int batch,               // Number of transforms
+                                 FloatType *padded_real,  // Padded real buffer
+                                 int stride,              // Stride
+                                 int dist                 // Distance between batches (padded: 2*(N/2+1) scalars)
     )
     {
       int n[] = {length};
-      fftw_complex *fftw_data = reinterpret_cast<fftw_complex *>(padded_real);
+      fftw_complex_t *fftw_data = reinterpret_cast<fftw_complex_t *>(padded_real);
 
       // In-place R2C: real → complex in same buffer
       r2c_inplace_plan_ =
-          fftw_plan_many_dft_r2c(1, n, batch, padded_real, NULL, stride, dist, // real input (dist in doubles)
-                                 fftw_data, NULL, stride, dist / 2,            // complex output (dist/2 in complex)
-                                 plan_flag_);
+          traits::plan_many_dft_r2c(1, n, batch, padded_real, NULL, stride, dist, // real input (dist in scalars)
+                                    fftw_data, NULL, stride, dist / 2,             // complex output (dist/2 in complex)
+                                    plan_flag_);
     }
 
     /**
      * @brief Execute in-place R2C transform.
      *
      * Transforms real data to complex data in-place. The input buffer must be
-     * padded (2*(N/2+1) doubles per row) to accommodate the complex output.
+     * padded (2*(N/2+1) FloatType values per row) to accommodate the complex output.
      *
      * @param padded_real Host pointer to padded real input buffer (overwritten with complex output)
      */
-    void execute_r2c_inplace(double *padded_real)
+    void execute_r2c_inplace(FloatType *padded_real)
     {
-      fftw_execute_dft_r2c(r2c_inplace_plan_, padded_real, reinterpret_cast<fftw_complex *>(padded_real));
+      traits::execute_dft_r2c(r2c_inplace_plan_, padded_real, reinterpret_cast<fftw_complex_t *>(padded_real));
     }
 
     /**
@@ -277,22 +388,22 @@ namespace parafaft
      * @param batch Number of 1D transforms to execute in batch
      * @param padded_real Host pointer to padded buffer (used for both complex input and real output)
      * @param stride Element stride (typically 1 for contiguous data)
-     * @param dist Distance between batches (padded: 2*(N/2+1) doubles)
+     * @param dist Distance between batches (padded: 2*(N/2+1) scalars)
      */
-    void create_c2r_inplace_plan(int length,          // Real-space output length N
-                                 int batch,           // Number of transforms
-                                 double *padded_real, // Padded real buffer (also used as complex input)
-                                 int stride,          // Stride
-                                 int dist             // Distance between batches (padded: 2*(N/2+1))
+    void create_c2r_inplace_plan(int length,              // Real-space output length N
+                                 int batch,               // Number of transforms
+                                 FloatType *padded_real,  // Padded real buffer (also used as complex input)
+                                 int stride,              // Stride
+                                 int dist                 // Distance between batches (padded: 2*(N/2+1))
     )
     {
       int n[] = {length};
-      fftw_complex *fftw_data = reinterpret_cast<fftw_complex *>(padded_real);
+      fftw_complex_t *fftw_data = reinterpret_cast<fftw_complex_t *>(padded_real);
 
       // In-place C2R: complex → real in same buffer
       c2r_inplace_plan_ =
-          fftw_plan_many_dft_c2r(1, n, batch, fftw_data, NULL, stride, dist / 2, // dist/2 for complex stride
-                                 padded_real, NULL, stride, dist, plan_flag_);
+          traits::plan_many_dft_c2r(1, n, batch, fftw_data, NULL, stride, dist / 2, // dist/2 for complex stride
+                                    padded_real, NULL, stride, dist, plan_flag_);
     }
 
     /**
@@ -303,17 +414,17 @@ namespace parafaft
      *
      * @param padded_real Host pointer to buffer (complex input, real output)
      */
-    void execute_c2r_inplace(double *padded_real)
+    void execute_c2r_inplace(FloatType *padded_real)
     {
-      fftw_execute_dft_c2r(c2r_inplace_plan_, reinterpret_cast<fftw_complex *>(padded_real), padded_real);
+      traits::execute_dft_c2r(c2r_inplace_plan_, reinterpret_cast<fftw_complex_t *>(padded_real), padded_real);
     }
 
     /**
      * @brief Execute pre-created plan for specified stage.
      *
      * Executes the C2C transform for the given stage using the new-array
-     * execution interface (fftw_execute_dft), allowing the plan to be
-     * applied to data at a different address with the same layout.
+     * execution interface, allowing the plan to be applied to data at a
+     * different address with the same layout.
      *
      * @param stage Stage index (0 to num_stages-1)
      * @param direction Transform direction (Forward or Backward)
@@ -321,9 +432,9 @@ namespace parafaft
      */
     void execute_stage(int stage, FFTDirection direction, Complex *data)
     {
-      fftw_plan plan = (direction == FFTDirection::Forward) ? forward_plans_[stage] : backward_plans_[stage];
-      fftw_complex *fftw_data = reinterpret_cast<fftw_complex *>(data);
-      fftw_execute_dft(plan, fftw_data, fftw_data);
+      fftw_plan_t plan = (direction == FFTDirection::Forward) ? forward_plans_[stage] : backward_plans_[stage];
+      fftw_complex_t *fftw_data = reinterpret_cast<fftw_complex_t *>(data);
+      traits::execute_dft(plan, fftw_data, fftw_data);
     }
 
     /**
@@ -368,16 +479,16 @@ namespace parafaft
     ~FFTWBackend()
     {
       for (auto plan : forward_plans_) {
-        if (plan) fftw_destroy_plan(plan);
+        if (plan) traits::destroy_plan(plan);
       }
       for (auto plan : backward_plans_) {
-        if (plan) fftw_destroy_plan(plan);
+        if (plan) traits::destroy_plan(plan);
       }
-      if (r2c_inplace_plan_) fftw_destroy_plan(r2c_inplace_plan_);
-      if (c2r_inplace_plan_) fftw_destroy_plan(c2r_inplace_plan_);
+      if (r2c_inplace_plan_) traits::destroy_plan(r2c_inplace_plan_);
+      if (c2r_inplace_plan_) traits::destroy_plan(c2r_inplace_plan_);
 
 #if defined(PARAFAFT_FFTW_THREADS) || defined(PARAFAFT_FFTW_OMP)
-      fftw_cleanup_threads();
+      traits::cleanup_threads();
 #endif
     }
 
@@ -419,7 +530,7 @@ namespace parafaft
      */
     static bool exportWisdom(const char *filename)
     {
-      return fftw_export_wisdom_to_filename(filename) != 0;
+      return traits::export_wisdom(filename) != 0;
     }
 
     /**
@@ -433,7 +544,7 @@ namespace parafaft
      */
     static bool importWisdom(const char *filename)
     {
-      return fftw_import_wisdom_from_filename(filename) != 0;
+      return traits::import_wisdom(filename) != 0;
     }
 
     /**
@@ -444,14 +555,14 @@ namespace parafaft
      */
     static void forgetWisdom()
     {
-      fftw_forget_wisdom();
+      traits::forget_wisdom();
     }
 
   private:
-    std::vector<fftw_plan> forward_plans_;  ///< Forward C2C plans (one per stage)
-    std::vector<fftw_plan> backward_plans_; ///< Backward C2C plans (one per stage)
-    fftw_plan r2c_inplace_plan_ = nullptr;  ///< In-place R2C plan
-    fftw_plan c2r_inplace_plan_ = nullptr;  ///< In-place C2R plan
+    std::vector<fftw_plan_t> forward_plans_;  ///< Forward C2C plans (one per stage)
+    std::vector<fftw_plan_t> backward_plans_; ///< Backward C2C plans (one per stage)
+    fftw_plan_t r2c_inplace_plan_ = nullptr;  ///< In-place R2C plan
+    fftw_plan_t c2r_inplace_plan_ = nullptr;  ///< In-place C2R plan
 
     FFTBackendType backend_type_; ///< Threading backend type
     int num_threads_;              ///< Number of threads for FFTW

@@ -105,7 +105,7 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
   Statistics parafaft_stats;
 
   {
-    parafaft::ParaFaFT_C2C<D, parafaft::CuFFTBackend> fft(global_shape.data());
+    parafaft::ParaFaFT_C2C<D, parafaft::CuFFTBackend<>> fft(global_shape.data());
 
     int local_size = fft.get_local_size();
     int buffer_size = fft.get_required_output_size();
@@ -132,11 +132,11 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
     });
 
     // Allocate device buffer and copy host data
-    parafaft::CuFFTBackend::Complex *d_data = nullptr;
+    parafaft::CuFFTBackend<>::Complex *d_data = nullptr;
     cudaMalloc((void **)&d_data,
-               buffer_size * sizeof(parafaft::CuFFTBackend::Complex));
+               buffer_size * sizeof(parafaft::CuFFTBackend<>::Complex));
     cudaMemcpy(d_data, host_buffer.data(),
-               buffer_size * sizeof(parafaft::CuFFTBackend::Complex),
+               buffer_size * sizeof(parafaft::CuFFTBackend<>::Complex),
                cudaMemcpyHostToDevice);
 
     MPI_Barrier(MPI_COMM_WORLD);
@@ -151,7 +151,7 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
     for (int iter = 0; iter < iterations; ++iter) {
       // Re-upload original data for consistent input each iteration
       cudaMemcpy(d_data, host_buffer.data(),
-                 buffer_size * sizeof(parafaft::CuFFTBackend::Complex),
+                 buffer_size * sizeof(parafaft::CuFFTBackend<>::Complex),
                  cudaMemcpyHostToDevice);
 
       MPI_Barrier(MPI_COMM_WORLD);

@@ -28,6 +28,28 @@
 
 namespace parafaft {
 // ============================================================================
+// Precision → MPI datatype mapping
+// ============================================================================
+
+/**
+ * @brief Map a C++ floating-point type to the corresponding MPI complex datatype.
+ *
+ * Specialized for double → MPI_C_DOUBLE_COMPLEX and float → MPI_C_FLOAT_COMPLEX.
+ * Used by exchange helpers and core classes to select the right MPI datatype
+ * based on the active FloatType precision.
+ */
+template <typename T> inline MPI_Datatype mpi_complex_type();
+template <> inline MPI_Datatype mpi_complex_type<double>() { return MPI_C_DOUBLE_COMPLEX; }
+template <> inline MPI_Datatype mpi_complex_type<float>() { return MPI_C_FLOAT_COMPLEX; }
+
+/**
+ * @brief Map a C++ floating-point type to the corresponding MPI real datatype.
+ */
+template <typename T> inline MPI_Datatype mpi_real_type();
+template <> inline MPI_Datatype mpi_real_type<double>() { return MPI_DOUBLE; }
+template <> inline MPI_Datatype mpi_real_type<float>() { return MPI_FLOAT; }
+
+// ============================================================================
 // Utility Functions
 // ============================================================================
 
@@ -392,12 +414,13 @@ inline void exchange_packed(
   MPI_Comm_rank(comm, &myrank);
   geom.requests.clear();
 
+  const MPI_Datatype mpi_dtype = mpi_complex_type<typename BackendT::FloatType>();
   for (int p = 0; p < nparts; ++p) {
     if (p == myrank) continue;
     size_t recv_byte_off = static_cast<size_t>(geom.recv_displs[p]) * elem_size;
     MPI_Request req;
     MPI_Irecv(reinterpret_cast<char *>(recv_into) + recv_byte_off,
-              geom.recv_counts[p], MPI_C_DOUBLE_COMPLEX, p, 0, comm, &req);
+              geom.recv_counts[p], mpi_dtype, p, 0, comm, &req);
     geom.requests.push_back(req);
   }
   for (int p = 0; p < nparts; ++p) {
@@ -405,7 +428,7 @@ inline void exchange_packed(
     size_t send_byte_off = static_cast<size_t>(geom.send_displs[p]) * elem_size;
     MPI_Request req;
     MPI_Isend(reinterpret_cast<char *>(send_from) + send_byte_off,
-              geom.send_counts[p], MPI_C_DOUBLE_COMPLEX, p, 0, comm, &req);
+              geom.send_counts[p], mpi_dtype, p, 0, comm, &req);
     geom.requests.push_back(req);
   }
 
@@ -515,13 +538,14 @@ inline void exchange_hybrid(
   MPI_Comm_rank(comm, &myrank);
 
   // Post MPI Irecv/Isend for non-P2P neighbours
+  const MPI_Datatype mpi_dtype = mpi_complex_type<typename BackendT::FloatType>();
   geom.requests.clear();
   for (int p = 0; p < nparts; ++p) {
     if (p == myrank || peer_enabled[p]) continue;
     size_t recv_byte_off = static_cast<size_t>(geom.recv_displs[p]) * elem_size;
     MPI_Request req;
     MPI_Irecv(reinterpret_cast<char *>(recv_into) + recv_byte_off,
-              geom.recv_counts[p], MPI_C_DOUBLE_COMPLEX, p, 0, comm, &req);
+              geom.recv_counts[p], mpi_dtype, p, 0, comm, &req);
     geom.requests.push_back(req);
   }
   for (int p = 0; p < nparts; ++p) {
@@ -529,7 +553,7 @@ inline void exchange_hybrid(
     size_t send_byte_off = static_cast<size_t>(geom.send_displs[p]) * elem_size;
     MPI_Request req;
     MPI_Isend(reinterpret_cast<char *>(pack_buf) + send_byte_off,
-              geom.send_counts[p], MPI_C_DOUBLE_COMPLEX, p, 0, comm, &req);
+              geom.send_counts[p], mpi_dtype, p, 0, comm, &req);
     geom.requests.push_back(req);
   }
 

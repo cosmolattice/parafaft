@@ -29,7 +29,7 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
 
   {
     std::cout << "Creating ParaFaFT..." << std::endl;
-    parafaft::ParaFaFT_C2C<D, parafaft::FFTWBackend> fft(global_shape.data());
+    parafaft::ParaFaFT_C2C<D, parafaft::FFTWBackend<>> fft(global_shape.data());
 
     int local_size = fft.get_local_size();
     int buffer_size = fft.get_required_output_size();

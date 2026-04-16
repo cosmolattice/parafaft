@@ -44,7 +44,7 @@ void test_contiguous_layout()
 
   try {
     // Create backend and plan
-    parafaft::HipFFTBackend backend(1);
+    parafaft::HipFFTBackend<> backend(1);
     backend.create_stage_plan(0, N, batch, device_data.data(), 1, N);
 
     // Roundtrip
@@ -103,7 +103,7 @@ void test_strided_layout()
 
   try {
     // Create backend and plan
-    parafaft::HipFFTBackend backend(1);
+    parafaft::HipFFTBackend<> backend(1);
     backend.create_stage_plan(0, N, batch, device_data.data(), batch, 1);
 
     // Roundtrip
@@ -167,7 +167,7 @@ void test_multiple_stages()
 
   try {
     // Create backend with 3 stages
-    parafaft::HipFFTBackend backend(num_stages);
+    parafaft::HipFFTBackend<> backend(num_stages);
     for (int stage = 0; stage < num_stages; ++stage) {
       backend.create_stage_plan(stage, N, 1, device_data[stage].data(), 1, N);
     }
@@ -244,7 +244,7 @@ void test_different_pointers()
 
   try {
     // Create single backend and plan (using data1 for plan creation)
-    parafaft::HipFFTBackend backend(1);
+    parafaft::HipFFTBackend<> backend(1);
     backend.create_stage_plan(0, N, batch, device_data1.data(), 1, N);
 
     // Apply the same plan to all three different arrays
@@ -323,7 +323,7 @@ void test_r2c_c2r_inplace()
 
   try {
     // Create backend with R2C and C2R plans
-    parafaft::HipFFTBackend backend(0); // No C2C stages needed
+    parafaft::HipFFTBackend<> backend(0); // No C2C stages needed
     backend.create_r2c_inplace_plan(N, batch, device_data.data(), 1, padded_dist);
     backend.create_c2r_inplace_plan(N, batch, device_data.data(), 1, padded_dist);
 

@@ -6,6 +6,10 @@
  * GPU-based FFT operations. Supports C2C, R2C, and C2R transforms as required
  * by ParaFaFT and ParaFaFT_R2C.
  *
+ * Precision: CuFFTBackend is a class template parameterised on FloatType.
+ *   - CuFFTBackend<double> (default) uses CUFFT_Z2Z / CUFFT_D2Z / CUFFT_Z2D.
+ *   - CuFFTBackend<float>  uses CUFFT_C2C / CUFFT_R2C / CUFFT_C2R.
+ *
  * @note Requires CUDA toolkit and cuFFT library.
  */
 
@@ -112,20 +116,73 @@ private:
 };
 
 /**
+ * @brief Precision-specific cuFFT type/plan/exec mapping.
+ *
+ * Routes CuFFTBackend<FloatType> to the right cuFFT plan constants
+ * (CUFFT_Z2Z / D2Z / Z2D for double; CUFFT_C2C / R2C / C2R for float)
+ * and the right device complex/real types and exec functions.
+ */
+template <typename T> struct cufft_traits;
+
+template <> struct cufft_traits<double> {
+  using real_t = cufftDoubleReal;
+  using complex_t = cufftDoubleComplex;
+  static constexpr cufftType c2c_type = CUFFT_Z2Z;
+  static constexpr cufftType r2c_type = CUFFT_D2Z;
+  static constexpr cufftType c2r_type = CUFFT_Z2D;
+  static cufftResult exec_c2c(cufftHandle p, complex_t *in, complex_t *out, int dir) {
+    return cufftExecZ2Z(p, in, out, dir);
+  }
+  static cufftResult exec_r2c(cufftHandle p, real_t *in, complex_t *out) {
+    return cufftExecD2Z(p, in, out);
+  }
+  static cufftResult exec_c2r(cufftHandle p, complex_t *in, real_t *out) {
+    return cufftExecZ2D(p, in, out);
+  }
+};
+
+template <> struct cufft_traits<float> {
+  using real_t = cufftReal;
+  using complex_t = cufftComplex;
+  static constexpr cufftType c2c_type = CUFFT_C2C;
+  static constexpr cufftType r2c_type = CUFFT_R2C;
+  static constexpr cufftType c2r_type = CUFFT_C2R;
+  static cufftResult exec_c2c(cufftHandle p, complex_t *in, complex_t *out, int dir) {
+    return cufftExecC2C(p, in, out, dir);
+  }
+  static cufftResult exec_r2c(cufftHandle p, real_t *in, complex_t *out) {
+    return cufftExecR2C(p, in, out);
+  }
+  static cufftResult exec_c2r(cufftHandle p, complex_t *in, real_t *out) {
+    return cufftExecC2R(p, in, out);
+  }
+};
+
+/**
  * @brief cuFFT backend for GPU-accelerated FFT operations.
  *
  * Provides an interface compatible with ParaFaFT for executing FFT transforms
  * on NVIDIA GPUs using cuFFT. Supports C2C, R2C, and C2R transforms.
  *
+ * @tparam FloatType Precision of the transform: `double` (default, uses
+ *         CUFFT_Z2Z / D2Z / Z2D) or `float` (uses CUFFT_C2C / R2C / C2R).
+ *
  * Memory management: Uses cuvector for device memory allocation.
  * All data pointers passed to this backend must be device pointers.
  */
+template <typename FloatTypeT = double>
 class CuFFTBackend {
 public:
-  using Complex = cuda::std::complex<double>; ///< Complex number type
-  using Buffer = cuvector<double>; ///< Real buffer type (device memory)
-  using ComplexBuffer =
-      cuvector<Complex>; ///< Complex buffer type (device memory)
+  using FloatType = FloatTypeT;                      ///< Scalar floating-point type
+  using Complex = cuda::std::complex<FloatType>;     ///< Complex number type
+  using Buffer = cuvector<FloatType>;                ///< Real buffer type (device memory)
+  using ComplexBuffer = cuvector<Complex>;           ///< Complex buffer type (device memory)
+private:
+  using traits = cufft_traits<FloatType>;
+  using cufft_real_t = typename traits::real_t;
+  using cufft_complex_t = typename traits::complex_t;
+
+public:
 
   /**
    * @brief Construct a cuFFT backend with storage for the given number of
@@ -239,13 +296,13 @@ public:
 
     // Create forward plan
     check_cufft(cufftPlanMany(&forward_plans_[stage], 1, n, inembed, stride,
-                              dist, onembed, stride, dist, CUFFT_Z2Z, batch),
+                              dist, onembed, stride, dist, traits::c2c_type, batch),
                 "cufftPlanMany C2C forward");
     cufftSetStream(forward_plans_[stage], stream_);
 
     // Create backward plan
     check_cufft(cufftPlanMany(&backward_plans_[stage], 1, n, inembed, stride,
-                              dist, onembed, stride, dist, CUFFT_Z2Z, batch),
+                              dist, onembed, stride, dist, traits::c2c_type, batch),
                 "cufftPlanMany C2C backward");
     cufftSetStream(backward_plans_[stage], stream_);
   }
@@ -268,11 +325,11 @@ public:
                            : backward_plans_[stage];
     int cufft_direction =
         (direction == FFTDirection::Forward) ? CUFFT_FORWARD : CUFFT_INVERSE;
-    cufftDoubleComplex *cufft_data =
-        reinterpret_cast<cufftDoubleComplex *>(data);
+    cufft_complex_t *cufft_data =
+        reinterpret_cast<cufft_complex_t *>(data);
 
-    check_cufft(cufftExecZ2Z(plan, cufft_data, cufft_data, cufft_direction),
-                "cufftExecZ2Z");
+    check_cufft(traits::exec_c2c(plan, cufft_data, cufft_data, cufft_direction),
+                "cufftExecC2C/Z2Z");
   }
 
   // ========== R2C In-Place Transform Methods ==========
@@ -292,17 +349,18 @@ public:
    * @param padded_real Device pointer to padded real buffer (for size
    * calculation only)
    * @param stride Element stride (typically 1 for contiguous data)
-   * @param dist Distance between batches in doubles (should be 2*(N/2+1) for
+   * @param dist Distance between batches in FloatType scalars (should be 2*(N/2+1) for
    * in-place)
    */
   // Create in-place R2C plan for padded memory optimization
   void create_r2c_inplace_plan(
-      int length,          // Real-space FFT length N
-      int batch,           // Number of 1D transforms
-      double *padded_real, // Padded real buffer (for size calculation only)
-      int stride,          // Stride (typically 1)
-      int dist             // Distance between batches (2*(N/2+1) doubles)
+      int length,              // Real-space FFT length N
+      int batch,               // Number of 1D transforms
+      FloatType *padded_real,  // Padded real buffer (for size calculation only)
+      int stride,              // Stride (typically 1)
+      int dist                 // Distance between batches (2*(N/2+1) scalars)
   ) {
+    (void)padded_real;
     // R2C: N real inputs -> N/2+1 complex outputs
     // IMPORTANT: Unlike FFTW, cuFFT ignores stride/dist when inembed/onembed
     // are NULL! We must explicitly set inembed/onembed to match FFTW behavior.
@@ -310,12 +368,12 @@ public:
     int inembed[] = {length};         // Real input embed = N
     int onembed[] = {length / 2 + 1}; // Complex output embed = N/2+1
 
-    // Note: output dist is half of input dist (complex elements vs doubles)
+    // Note: output dist is half of input dist (complex elements vs scalars)
     check_cufft(cufftPlanMany(&r2c_plan_, 1, n, inembed, stride,
                               dist, // Real input layout
                               onembed, stride,
                               dist / 2, // Complex output layout
-                              CUFFT_D2Z, batch),
+                              traits::r2c_type, batch),
                 "cufftPlanMany R2C");
     cufftSetStream(r2c_plan_, stream_);
   }
@@ -324,23 +382,22 @@ public:
    * @brief Execute in-place R2C transform.
    *
    * Transforms real data to complex data in-place on GPU. The device buffer
-   * must be padded (2*(N/2+1) doubles per row) to accommodate the complex
+   * must be padded (2*(N/2+1) FloatType scalars per row) to accommodate the complex
    * output. Synchronizes the device after execution.
    *
    * @param device_padded_real Device pointer to padded real input buffer
    * (overwritten with complex output)
    */
   // Execute in-place R2C plan
-  void execute_r2c_inplace(double *device_padded_real) {
-    cufftDoubleReal *input_data =
-        reinterpret_cast<cufftDoubleReal *>(device_padded_real);
-    cufftDoubleComplex *output_data =
-        reinterpret_cast<cufftDoubleComplex *>(device_padded_real);
+  void execute_r2c_inplace(FloatType *device_padded_real) {
+    cufft_real_t *input_data =
+        reinterpret_cast<cufft_real_t *>(device_padded_real);
+    cufft_complex_t *output_data =
+        reinterpret_cast<cufft_complex_t *>(device_padded_real);
 
-    // Execute R2C (D2Z = double to Z complex)
     // In-place: output overwrites input buffer
-    check_cufft(cufftExecD2Z(r2c_plan_, input_data, output_data),
-                "cufftExecD2Z");
+    check_cufft(traits::exec_r2c(r2c_plan_, input_data, output_data),
+                "cufftExecR2C/D2Z");
   }
 
   // ========== C2R In-Place Transform Methods ==========
@@ -360,15 +417,16 @@ public:
    * @param batch Number of 1D transforms to execute in batch
    * @param padded_real Device pointer to padded buffer
    * @param stride Element stride (typically 1 for contiguous data)
-   * @param dist Distance between batches (padded: 2*(N/2+1) doubles)
+   * @param dist Distance between batches (padded: 2*(N/2+1) scalars)
    */
   // Create in-place C2R plan for padded memory optimization
-  void create_c2r_inplace_plan(int length, // Real-space output length N
-                               int batch,  // Number of transforms
-                               double *padded_real, // Padded real buffer
-                               int stride,          // Stride (typically 1)
-                               int dist // Distance between batches (2*(N/2+1))
+  void create_c2r_inplace_plan(int length,              // Real-space output length N
+                               int batch,               // Number of transforms
+                               FloatType *padded_real,  // Padded real buffer
+                               int stride,              // Stride (typically 1)
+                               int dist                 // Distance between batches (2*(N/2+1))
   ) {
+    (void)padded_real;
     // C2R: N/2+1 complex inputs -> N real outputs
     // IMPORTANT: Unlike FFTW, cuFFT ignores stride/dist when inembed/onembed
     // are NULL! We must explicitly set inembed/onembed to match FFTW behavior.
@@ -379,7 +437,7 @@ public:
     check_cufft(cufftPlanMany(&c2r_plan_, 1, n, inembed, stride,
                               dist / 2,              // Complex input layout
                               onembed, stride, dist, // Real output layout
-                              CUFFT_Z2D, batch),
+                              traits::c2r_type, batch),
                 "cufftPlanMany C2R");
     cufftSetStream(c2r_plan_, stream_);
   }
@@ -395,15 +453,14 @@ public:
    * output)
    */
   // Execute in-place C2R plan
-  void execute_c2r_inplace(double *device_padded_real) {
-    cufftDoubleComplex *input_data =
-        reinterpret_cast<cufftDoubleComplex *>(device_padded_real);
-    cufftDoubleReal *output_data =
-        reinterpret_cast<cufftDoubleReal *>(device_padded_real);
+  void execute_c2r_inplace(FloatType *device_padded_real) {
+    cufft_complex_t *input_data =
+        reinterpret_cast<cufft_complex_t *>(device_padded_real);
+    cufft_real_t *output_data =
+        reinterpret_cast<cufft_real_t *>(device_padded_real);
 
-    // Execute C2R (Z2D = Z complex to double)
-    check_cufft(cufftExecZ2D(c2r_plan_, input_data, output_data),
-                "cufftExecZ2D");
+    check_cufft(traits::exec_c2r(c2r_plan_, input_data, output_data),
+                "cufftExecC2R/Z2D");
   }
 
   /**

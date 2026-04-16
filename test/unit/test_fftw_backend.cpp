@@ -22,7 +22,7 @@ void test_contiguous_layout() {
   std::vector<std::complex<double>> original = data;
 
   // Create backend and plan
-  parafaft::FFTWBackend backend(1);
+  parafaft::FFTWBackend<> backend(1);
   backend.create_stage_plan(0, N, batch, data.data(), 1, N);
 
   // Roundtrip
@@ -66,7 +66,7 @@ void test_strided_layout() {
   std::vector<std::complex<double>> original = data;
 
   // Create backend and plan
-  parafaft::FFTWBackend backend(1);
+  parafaft::FFTWBackend<> backend(1);
   backend.create_stage_plan(0, N, batch, data.data(), batch, 1);
 
   // Roundtrip
@@ -109,7 +109,7 @@ void test_multiple_stages() {
   }
 
   // Create backend with 3 stages
-  parafaft::FFTWBackend backend(num_stages);
+  parafaft::FFTWBackend<> backend(num_stages);
   for (int stage = 0; stage < num_stages; ++stage) {
     backend.create_stage_plan(stage, N, 1, stage_data[stage].data(), 1, N);
   }
@@ -165,7 +165,7 @@ void test_different_pointers() {
   auto original3 = data3;
 
   // Create single backend and plan (using data1 for plan creation)
-  parafaft::FFTWBackend backend(1);
+  parafaft::FFTWBackend<> backend(1);
   backend.create_stage_plan(0, N, batch, data1.data(), 1, N);
 
   // Apply the same plan to all three different arrays

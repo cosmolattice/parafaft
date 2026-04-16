@@ -63,9 +63,15 @@ namespace parafaft {
  *   Each processor holds a contiguous block of the D-dimensional array.
  *
  * @tparam D Number of dimensions (must be >= 2)
- * @tparam Backend FFT backend type (default: FFTWBackend)
+ * @tparam Backend FFT backend type (default: FFTWBackend<>)
+ * @tparam FloatType Scalar precision (default: double). Must match Backend::FloatType.
  */
-template <int D, typename Backend = FFTWBackend> class ParaFaFT_C2C {
+template <int D, typename Backend = FFTWBackend<>, typename FloatType = double>
+class ParaFaFT_C2C {
+  static_assert(std::is_same<FloatType, typename Backend::FloatType>::value,
+                "ParaFaFT_C2C: FloatType must match Backend::FloatType — you "
+                "instantiated the class with mismatched precision parameters.");
+
 public:
   using Complex = typename Backend::Complex;
   using Buffer = typename Backend::Buffer;
@@ -669,9 +675,10 @@ private:
         fwd_send_types_[t].resize(nparts_[t]);
         fwd_recv_types_[t].resize(nparts_[t]);
 
-        subarray(MPI_C_DOUBLE_COMPLEX, D, stage_shapes_[t].data(), send_axis,
+        const MPI_Datatype mpi_complex = mpi_complex_type<FloatType>();
+        subarray(mpi_complex, D, stage_shapes_[t].data(), send_axis,
                  nparts_[t], fwd_send_types_[t].data());
-        subarray(MPI_C_DOUBLE_COMPLEX, D, stage_shapes_[t + 1].data(),
+        subarray(mpi_complex, D, stage_shapes_[t + 1].data(),
                  recv_axis, nparts_[t], fwd_recv_types_[t].data());
       }
     }

@@ -92,9 +92,15 @@ namespace parafaft {
  * - Ping-pong buffering with minimal memory overhead
  *
  * @tparam D Number of dimensions (must be >= 2)
- * @tparam Backend FFT backend type (default: FFTWBackend)
+ * @tparam Backend FFT backend type (default: FFTWBackend<>)
+ * @tparam FloatType Scalar precision (default: double). Must match Backend::FloatType.
  */
-template <int D, typename Backend = FFTWBackend> class ParaFaFT_R2C {
+template <int D, typename Backend = FFTWBackend<>, typename FloatType = double>
+class ParaFaFT_R2C {
+  static_assert(std::is_same<FloatType, typename Backend::FloatType>::value,
+                "ParaFaFT_R2C: FloatType must match Backend::FloatType — you "
+                "instantiated the class with mismatched precision parameters.");
+
 public:
   using Complex = typename Backend::Complex;
   using Buffer = typename Backend::Buffer;
@@ -302,12 +308,12 @@ public:
    *       Intermediate stages may require more space than the final output
    *       due to MPI redistribution changing local array sizes.
    */
-  void forward(const double *real_input, Complex *complex_output) {
+  void forward(const FloatType *real_input, Complex *complex_output) {
     // Pad the data and move it into the destination buffer
-    copy_real_to_padded(real_input, reinterpret_cast<double *>(complex_output));
+    copy_real_to_padded(real_input, reinterpret_cast<FloatType *>(complex_output));
 
     // In-place forward transform
-    forward_in_place(reinterpret_cast<double *>(complex_output));
+    forward_in_place(reinterpret_cast<FloatType *>(complex_output));
   }
 
   /**
@@ -329,7 +335,7 @@ public:
    *
    * @warning Input real data is destroyed during computation!
    */
-  void forward_in_place(double *padded_buffer) {
+  void forward_in_place(FloatType *padded_buffer) {
     if constexpr (Backend::handles_distributed) {
       backend_.forward_r2c();
       return;
@@ -414,12 +420,12 @@ public:
    * @note Internally uses a working buffer of size get_required_output_size()/2
    *       complex elements to handle intermediate MPI redistributions.
    */
-  void backward(Complex *complex_input, double *real_output) {
+  void backward(Complex *complex_input, FloatType *real_output) {
     // In-place backward transform
-    backward_in_place(reinterpret_cast<double *>(complex_input));
+    backward_in_place(reinterpret_cast<FloatType *>(complex_input));
 
     // Copy real output from padded buffer
-    copy_padded_to_real(reinterpret_cast<double *>(complex_input), real_output);
+    copy_padded_to_real(reinterpret_cast<FloatType *>(complex_input), real_output);
     backend_.sync();
   }
 
@@ -441,7 +447,7 @@ public:
    *
    * @warning Input complex data is destroyed during computation!
    */
-  void backward_in_place(double *padded_buffer) {
+  void backward_in_place(FloatType *padded_buffer) {
     if constexpr (Backend::handles_distributed) {
       backend_.backward_c2r();
       return;
@@ -691,13 +697,13 @@ public:
    *
    * When the backend handles distributed transforms (e.g., cuFFTMp), the
    * buffer is allocated using optimized memory (e.g., NVSHMEM). Users should
-   * write padded real data into the double* buffer before calling
+   * write padded real data into the FloatType* buffer before calling
    * forward_in_place(), and read results after backward_in_place().
    *
-   * @return Device pointer to the internal buffer as double*, or nullptr
+   * @return Device pointer to the internal buffer as FloatType*, or nullptr
    *         if the backend does not manage its own buffer.
    */
-  double *get_real_buffer() {
+  FloatType *get_real_buffer() {
     if constexpr (Backend::handles_distributed) {
       return backend_.get_real_buffer();
     } else {
@@ -728,8 +734,8 @@ private:
    * @param real_input Source array with contiguous real data.
    * @param[out] padded_output Destination array with padded layout.
    */
-  void copy_real_to_padded(const double *real_input,
-                           double *padded_output) const {
+  void copy_real_to_padded(const FloatType *real_input,
+                           FloatType *padded_output) const {
     const int last_dim = global_real_shape_[D - 1];
     const int complex_last_dim = global_real_shape_[D - 1] / 2 + 1;
     const int padded_stride = 2 * complex_last_dim;
@@ -741,8 +747,8 @@ private:
     }
 
     // Single 2D copy: contiguous real rows → padded rows
-    backend_.memcpy2d(padded_output, padded_stride * sizeof(double), real_input,
-                      last_dim * sizeof(double), last_dim * sizeof(double),
+    backend_.memcpy2d(padded_output, padded_stride * sizeof(FloatType), real_input,
+                      last_dim * sizeof(FloatType), last_dim * sizeof(FloatType),
                       batch);
   }
 
@@ -755,8 +761,8 @@ private:
    * @param padded_input Source array with padded layout.
    * @param[out] real_output Destination array with contiguous real data.
    */
-  void copy_padded_to_real(const double *padded_input,
-                           double *real_output) const {
+  void copy_padded_to_real(const FloatType *padded_input,
+                           FloatType *real_output) const {
     const int last_dim = global_real_shape_[D - 1];
     const int complex_last_dim = global_real_shape_[D - 1] / 2 + 1;
     const int padded_stride = 2 * complex_last_dim;
@@ -768,8 +774,8 @@ private:
     }
 
     // Single 2D copy: padded rows → contiguous real rows
-    backend_.memcpy2d(real_output, last_dim * sizeof(double), padded_input,
-                      padded_stride * sizeof(double), last_dim * sizeof(double),
+    backend_.memcpy2d(real_output, last_dim * sizeof(FloatType), padded_input,
+                      padded_stride * sizeof(FloatType), last_dim * sizeof(FloatType),
                       batch);
   }
 
@@ -810,9 +816,10 @@ private:
         fwd_send_types_[t].resize(nparts_[t]);
         fwd_recv_types_[t].resize(nparts_[t]);
 
-        subarray(MPI_C_DOUBLE_COMPLEX, D, stage_output_shapes_[t].data(),
+        const MPI_Datatype mpi_complex = mpi_complex_type<FloatType>();
+        subarray(mpi_complex, D, stage_output_shapes_[t].data(),
                  send_axis, nparts_[t], fwd_send_types_[t].data());
-        subarray(MPI_C_DOUBLE_COMPLEX, D, stage_shapes_[t + 1].data(),
+        subarray(mpi_complex, D, stage_shapes_[t + 1].data(),
                  recv_axis, nparts_[t], fwd_recv_types_[t].data());
       }
     }
@@ -1035,8 +1042,8 @@ private:
     // one buffer to be executed on any buffer with compatible alignment/layout.
     // Note: FFTW_MEASURE may write to the buffer during planning, but
     // scratch_b_ contains no useful data at construction time.
-    int padded_dist = 2 * complex_length; // 2*(N/2+1) doubles per transform
-    double *plan_buf = reinterpret_cast<double *>(scratch_b_.data());
+    int padded_dist = 2 * complex_length; // 2*(N/2+1) scalars per transform
+    FloatType *plan_buf = reinterpret_cast<FloatType *>(scratch_b_.data());
     backend_.create_r2c_inplace_plan(real_length, batch0, plan_buf, 1,
                                      padded_dist);
     backend_.create_c2r_inplace_plan(real_length, batch0, plan_buf, 1,
