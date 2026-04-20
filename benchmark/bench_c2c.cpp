@@ -58,7 +58,7 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
     MPI_Barrier(MPI_COMM_WORLD);
 
     std::cout << "Doing warmup FFTs ..." << std::endl;
-    for (int iter = 0; iter < 5; ++iter) {
+    for (int iter = 0; iter < 1; ++iter) {
       fft.forward(local_data.data());
       fft.backward(local_data.data());
     }
@@ -85,7 +85,7 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
   FFTWMPIReferenceCtoC<D> fftw_ref(N, MPI_COMM_WORLD);
 
   std::cout << "Doing warmup FFTs ..." << std::endl;
-  for (int iter = 0; iter < 5; ++iter)
+  for (int iter = 0; iter < 1; ++iter)
     fftw_ref.execute();
 
   std::cout << "Doing FFTs ..." << std::endl;

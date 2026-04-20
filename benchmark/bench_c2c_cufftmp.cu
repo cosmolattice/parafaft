@@ -1,5 +1,5 @@
-#include "../parafaft_c2c.hpp"
 #include "../backend/cufft/fft_backend_cufftmp.hpp"
+#include "../parafaft_c2c.hpp"
 
 #include <array>
 #include <cmath>
@@ -42,8 +42,7 @@ private:
   std::vector<double> values_;
 };
 
-template <int D>
-int nd_index(const int idx[], const int shape[]) {
+template <int D> int nd_index(const int idx[], const int shape[]) {
   int flat = idx[0];
   for (int d = 1; d < D; ++d)
     flat = flat * shape[d] + idx[d];
@@ -106,6 +105,7 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
   Statistics stats;
 
   {
+    std::cout << "Creating ParaFaFT..." << std::endl;
     parafaft::ParaFaFT_C2C<D, Backend> fft(global_shape.data());
 
     int local_shape[D];
@@ -120,6 +120,7 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
     const double center = N / 2.0;
     const double sigma = 4.0;
 
+    std::cout << "Filling data..." << std::endl;
     iterate_nd<D>(local_shape, [&](const std::array<int, D> &lidx) {
       double r2 = 0.0;
       for (int d = 0; d < D; ++d) {
@@ -139,12 +140,14 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
     MPI_Barrier(MPI_COMM_WORLD);
 
     // Warmup
-    for (int iter = 0; iter < 5; ++iter) {
+    std::cout << "Doing warmup FFTs ..." << std::endl;
+    for (int iter = 0; iter < 1; ++iter) {
       fft.forward(buffer);
       fft.backward(buffer);
     }
     cudaDeviceSynchronize();
 
+    std::cout << "Doing FFTs ..." << std::endl;
     // Timed iterations
     for (int iter = 0; iter < iterations; ++iter) {
       // Re-upload original data
@@ -169,8 +172,8 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
     std::cout << "ParaFaFT (cuFFTMp): mean=" << parafaft_mean
               << "s, std=" << parafaft_std << "s" << std::endl;
 
-    write_csv("bench_c2c_cufftmp.csv", mpi_size, N, parafaft_mean,
-              parafaft_std, iterations);
+    write_csv("bench_c2c_cufftmp.csv", mpi_size, N, parafaft_mean, parafaft_std,
+              iterations);
     std::cout << "CSV written to bench_c2c_cufftmp.csv" << std::endl;
   }
 }
@@ -184,8 +187,8 @@ int main(int argc, char **argv) {
 
   // Set GPU device based on node-local rank
   MPI_Comm local_comm;
-  MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, rank,
-                      MPI_INFO_NULL, &local_comm);
+  MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, rank, MPI_INFO_NULL,
+                      &local_comm);
   int local_rank;
   MPI_Comm_rank(local_comm, &local_rank);
   int num_devices;

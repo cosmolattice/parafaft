@@ -28,6 +28,7 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
   Statistics fftw_stats;
 
   {
+    std::cout << "Creating ParaFaFT..." << std::endl;
     parafaft::ParaFaFT_R2C<D, parafaft::FFTWBackend<>> fft(global_shape.data());
 
     int local_real_shape[D], real_start[D];
@@ -43,6 +44,7 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
     const double center = N / 2.0;
     const double sigma = 4.0;
 
+    std::cout << "Filling data..." << std::endl;
     iterate_nd<D>(local_real_shape, [&](const std::array<int, D> &lidx) {
       double r2 = 0.0;
       for (int d = 0; d < D; ++d) {
@@ -61,11 +63,13 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
 
     MPI_Barrier(MPI_COMM_WORLD);
 
-    for (int iter = 0; iter < 5; ++iter) {
+    std::cout << "Doing warmup FFTs ..." << std::endl;
+    for (int iter = 0; iter < 1; ++iter) {
       fft.forward_in_place(padded_buffer.data());
       fft.backward_in_place(padded_buffer.data());
     }
 
+    std::cout << "Doing FFTs ..." << std::endl;
     for (int iter = 0; iter < iterations; ++iter) {
       MPI_Barrier(MPI_COMM_WORLD);
       double start = MPI_Wtime();
@@ -77,16 +81,20 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
     }
   }
 
+  std::cout << "Creating FFTW..." << std::endl;
   // fftw_init_threads() must be called before fftw_mpi_init()
   // (see FFTW docs: "Combining MPI and Threads")
   parafaft_bench::init_fftw_threads(MPI_COMM_WORLD);
   parafaft_bench::init_fftw_mpi();
 
+  std::cout << "Filling data..." << std::endl;
   FFTWMPIReferenceRtoC<D> fftw_ref(N, MPI_COMM_WORLD);
 
-  for (int iter = 0; iter < 5; ++iter)
+  std::cout << "Doing warmup FFTs ..." << std::endl;
+  for (int iter = 0; iter < 1; ++iter)
     fftw_ref.execute();
 
+  std::cout << "Doing FFTs ..." << std::endl;
   for (int iter = 0; iter < iterations; ++iter) {
     MPI_Barrier(MPI_COMM_WORLD);
     double start = MPI_Wtime();

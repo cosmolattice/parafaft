@@ -1,5 +1,5 @@
-#include "../parafaft_r2c.hpp"
 #include "../backend/cufft/fft_backend_cufft.hpp"
+#include "../parafaft_r2c.hpp"
 
 #include <array>
 #include <cmath>
@@ -96,7 +96,9 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
   Statistics parafaft_stats;
 
   {
-    parafaft::ParaFaFT_R2C<D, parafaft::CuFFTBackend<>> fft(global_shape.data());
+    std::cout << "Creating ParaFaFT..." << std::endl;
+    parafaft::ParaFaFT_R2C<D, parafaft::CuFFTBackend<>> fft(
+        global_shape.data());
 
     int local_real_shape[D], real_start[D];
     fft.get_local_real_shape(local_real_shape);
@@ -112,6 +114,7 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
     const double center = N / 2.0;
     const double sigma = 4.0;
 
+    std::cout << "Filling data..." << std::endl;
     iterate_nd<D>(local_real_shape, [&](const std::array<int, D> &lidx) {
       double r2 = 0.0;
       for (int d = 0; d < D; ++d) {
@@ -131,22 +134,24 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
     // Allocate device buffer and copy host data
     double *d_data = nullptr;
     cudaMalloc((void **)&d_data, local_padded_size * sizeof(double));
-    cudaMemcpy(d_data, host_buffer.data(),
-               local_padded_size * sizeof(double), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_data, host_buffer.data(), local_padded_size * sizeof(double),
+               cudaMemcpyHostToDevice);
 
     MPI_Barrier(MPI_COMM_WORLD);
 
+    std::cout << "Doing warmup FFTs ..." << std::endl;
     // Warmup
-    for (int iter = 0; iter < 5; ++iter) {
+    for (int iter = 0; iter < 1; ++iter) {
       fft.forward_in_place(d_data);
       fft.backward_in_place(d_data);
     }
 
+    std::cout << "Doing FFTs ..." << std::endl;
     // Timed iterations
     for (int iter = 0; iter < iterations; ++iter) {
       // Re-upload original data for consistent input each iteration
-      cudaMemcpy(d_data, host_buffer.data(),
-                 local_padded_size * sizeof(double), cudaMemcpyHostToDevice);
+      cudaMemcpy(d_data, host_buffer.data(), local_padded_size * sizeof(double),
+                 cudaMemcpyHostToDevice);
 
       MPI_Barrier(MPI_COMM_WORLD);
       double start = MPI_Wtime();
@@ -183,8 +188,8 @@ int main(int argc, char **argv) {
 
   // Set GPU device based on node-local rank
   MPI_Comm local_comm;
-  MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, rank,
-                      MPI_INFO_NULL, &local_comm);
+  MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, rank, MPI_INFO_NULL,
+                      &local_comm);
   int local_rank;
   MPI_Comm_rank(local_comm, &local_rank);
   int num_devices;
