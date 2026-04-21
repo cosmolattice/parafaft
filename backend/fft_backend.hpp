@@ -169,7 +169,7 @@ namespace parafaft
    *   int global_start[D];   // global offset of local block
    *   int output_shape[D];   // local output dimensions (may differ for R2C)
    *   int output_start[D];   // global offset of output block
-   *   int required_size;     // minimum buffer size in elements
+   *   std::size_t required_size;  // minimum buffer size in elements
    * };
    *
    * void setup_distributed(const int global_shape[D], MPI_Comm comm);

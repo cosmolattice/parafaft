@@ -23,6 +23,7 @@
 
 #include <fftw3.h>
 #include <complex>
+#include <cstddef>
 #include <cstring>
 #include <new>
 #include <vector>
@@ -58,6 +59,7 @@ namespace parafaft
     using real_t = double;
     using complex_t = fftw_complex;
     using plan_t = fftw_plan;
+    using iodim64_t = fftw_iodim64;
 
     static real_t *alloc_real(size_t n) { return fftw_alloc_real(n); }
     static complex_t *alloc_complex(size_t n) { return fftw_alloc_complex(n); }
@@ -67,23 +69,20 @@ namespace parafaft
     static void plan_with_nthreads(int n) { fftw_plan_with_nthreads(n); }
     static void cleanup_threads() { fftw_cleanup_threads(); }
 
-    static plan_t plan_many_dft(int rank, const int *n, int howmany, complex_t *in, const int *inembed,
-                                int istride, int idist, complex_t *out, const int *onembed, int ostride,
-                                int odist, int sign, unsigned flags) {
-      return fftw_plan_many_dft(rank, n, howmany, in, inembed, istride, idist, out, onembed, ostride,
-                                odist, sign, flags);
+    static plan_t plan_guru64_dft(int rank, const iodim64_t *dims, int howmany_rank,
+                                  const iodim64_t *howmany_dims, complex_t *in, complex_t *out,
+                                  int sign, unsigned flags) {
+      return fftw_plan_guru64_dft(rank, dims, howmany_rank, howmany_dims, in, out, sign, flags);
     }
-    static plan_t plan_many_dft_r2c(int rank, const int *n, int howmany, real_t *in, const int *inembed,
-                                    int istride, int idist, complex_t *out, const int *onembed,
-                                    int ostride, int odist, unsigned flags) {
-      return fftw_plan_many_dft_r2c(rank, n, howmany, in, inembed, istride, idist, out, onembed,
-                                    ostride, odist, flags);
+    static plan_t plan_guru64_dft_r2c(int rank, const iodim64_t *dims, int howmany_rank,
+                                      const iodim64_t *howmany_dims, real_t *in, complex_t *out,
+                                      unsigned flags) {
+      return fftw_plan_guru64_dft_r2c(rank, dims, howmany_rank, howmany_dims, in, out, flags);
     }
-    static plan_t plan_many_dft_c2r(int rank, const int *n, int howmany, complex_t *in, const int *inembed,
-                                    int istride, int idist, real_t *out, const int *onembed, int ostride,
-                                    int odist, unsigned flags) {
-      return fftw_plan_many_dft_c2r(rank, n, howmany, in, inembed, istride, idist, out, onembed, ostride,
-                                    odist, flags);
+    static plan_t plan_guru64_dft_c2r(int rank, const iodim64_t *dims, int howmany_rank,
+                                      const iodim64_t *howmany_dims, complex_t *in, real_t *out,
+                                      unsigned flags) {
+      return fftw_plan_guru64_dft_c2r(rank, dims, howmany_rank, howmany_dims, in, out, flags);
     }
     static void execute_dft(plan_t p, complex_t *in, complex_t *out) { fftw_execute_dft(p, in, out); }
     static void execute_dft_r2c(plan_t p, real_t *in, complex_t *out) { fftw_execute_dft_r2c(p, in, out); }
@@ -100,6 +99,7 @@ namespace parafaft
     using real_t = float;
     using complex_t = fftwf_complex;
     using plan_t = fftwf_plan;
+    using iodim64_t = fftwf_iodim64;
 
     static real_t *alloc_real(size_t n) { return fftwf_alloc_real(n); }
     static complex_t *alloc_complex(size_t n) { return fftwf_alloc_complex(n); }
@@ -109,23 +109,20 @@ namespace parafaft
     static void plan_with_nthreads(int n) { fftwf_plan_with_nthreads(n); }
     static void cleanup_threads() { fftwf_cleanup_threads(); }
 
-    static plan_t plan_many_dft(int rank, const int *n, int howmany, complex_t *in, const int *inembed,
-                                int istride, int idist, complex_t *out, const int *onembed, int ostride,
-                                int odist, int sign, unsigned flags) {
-      return fftwf_plan_many_dft(rank, n, howmany, in, inembed, istride, idist, out, onembed, ostride,
-                                 odist, sign, flags);
+    static plan_t plan_guru64_dft(int rank, const iodim64_t *dims, int howmany_rank,
+                                  const iodim64_t *howmany_dims, complex_t *in, complex_t *out,
+                                  int sign, unsigned flags) {
+      return fftwf_plan_guru64_dft(rank, dims, howmany_rank, howmany_dims, in, out, sign, flags);
     }
-    static plan_t plan_many_dft_r2c(int rank, const int *n, int howmany, real_t *in, const int *inembed,
-                                    int istride, int idist, complex_t *out, const int *onembed,
-                                    int ostride, int odist, unsigned flags) {
-      return fftwf_plan_many_dft_r2c(rank, n, howmany, in, inembed, istride, idist, out, onembed,
-                                     ostride, odist, flags);
+    static plan_t plan_guru64_dft_r2c(int rank, const iodim64_t *dims, int howmany_rank,
+                                      const iodim64_t *howmany_dims, real_t *in, complex_t *out,
+                                      unsigned flags) {
+      return fftwf_plan_guru64_dft_r2c(rank, dims, howmany_rank, howmany_dims, in, out, flags);
     }
-    static plan_t plan_many_dft_c2r(int rank, const int *n, int howmany, complex_t *in, const int *inembed,
-                                    int istride, int idist, real_t *out, const int *onembed, int ostride,
-                                    int odist, unsigned flags) {
-      return fftwf_plan_many_dft_c2r(rank, n, howmany, in, inembed, istride, idist, out, onembed, ostride,
-                                     odist, flags);
+    static plan_t plan_guru64_dft_c2r(int rank, const iodim64_t *dims, int howmany_rank,
+                                      const iodim64_t *howmany_dims, complex_t *in, real_t *out,
+                                      unsigned flags) {
+      return fftwf_plan_guru64_dft_c2r(rank, dims, howmany_rank, howmany_dims, in, out, flags);
     }
     static void execute_dft(plan_t p, complex_t *in, complex_t *out) { fftwf_execute_dft(p, in, out); }
     static void execute_dft_r2c(plan_t p, real_t *in, complex_t *out) { fftwf_execute_dft_r2c(p, in, out); }
@@ -320,18 +317,23 @@ namespace parafaft
      * @param stride Stride between consecutive elements in a transform
      * @param dist Distance between first elements of consecutive transforms
      */
-    void create_stage_plan(int stage, int length, int batch, Complex *data, int stride, int dist)
+    void create_stage_plan(int stage, int length, std::size_t batch, Complex *data,
+                           std::ptrdiff_t stride, std::ptrdiff_t dist)
     {
-      int n[] = {length};
       fftw_complex_t *fftw_data = reinterpret_cast<fftw_complex_t *>(data);
+      // Batched 1D transform: dims describe the transform axis (length N,
+      // in-stride == out-stride == stride); howmany_dims describe the batch
+      // (howmany = batch, dist between batches for in/out).
+      // Using guru64 so strides/batch are ptrdiff_t — avoids the int-overflow
+      // trap in plan_many_dft when batch*dist exceeds 2^31.
+      typename traits::iodim64_t dims[] = {{static_cast<std::ptrdiff_t>(length), stride, stride}};
+      typename traits::iodim64_t howmany_dims[] = {
+          {static_cast<std::ptrdiff_t>(batch), dist, dist}};
 
-      // Create forward plan (bound to data pointer)
-      forward_plans_[stage] = traits::plan_many_dft(1, n, batch, fftw_data, NULL, stride, dist, fftw_data, NULL, stride,
-                                                    dist, FFTW_FORWARD, plan_flag_);
-
-      // Create backward plan (bound to data pointer)
-      backward_plans_[stage] = traits::plan_many_dft(1, n, batch, fftw_data, NULL, stride, dist, fftw_data, NULL, stride,
-                                                     dist, FFTW_BACKWARD, plan_flag_);
+      forward_plans_[stage] = traits::plan_guru64_dft(1, dims, 1, howmany_dims, fftw_data, fftw_data,
+                                                      FFTW_FORWARD, plan_flag_);
+      backward_plans_[stage] = traits::plan_guru64_dft(1, dims, 1, howmany_dims, fftw_data, fftw_data,
+                                                       FFTW_BACKWARD, plan_flag_);
     }
 
     /**
@@ -347,21 +349,22 @@ namespace parafaft
      * @param stride Element stride (typically 1 for contiguous data)
      * @param dist Distance between batches in FloatType elements (should be 2*(N/2+1) for in-place)
      */
-    void create_r2c_inplace_plan(int length,              // Real-space input length N
-                                 int batch,               // Number of transforms
-                                 FloatType *padded_real,  // Padded real buffer
-                                 int stride,              // Stride
-                                 int dist                 // Distance between batches (padded: 2*(N/2+1) scalars)
+    void create_r2c_inplace_plan(int length,               // Real-space input length N
+                                 std::size_t batch,         // Number of transforms
+                                 FloatType *padded_real,    // Padded real buffer
+                                 std::ptrdiff_t stride,     // Stride
+                                 std::ptrdiff_t dist        // Distance between batches (padded: 2*(N/2+1) scalars)
     )
     {
-      int n[] = {length};
       fftw_complex_t *fftw_data = reinterpret_cast<fftw_complex_t *>(padded_real);
+      // For R2C: output dist is dist/2 (complex elements vs scalar elements).
+      // Using guru64 so batch*dist isn't truncated to int inside FFTW.
+      typename traits::iodim64_t dims[] = {{static_cast<std::ptrdiff_t>(length), stride, stride}};
+      typename traits::iodim64_t howmany_dims[] = {
+          {static_cast<std::ptrdiff_t>(batch), dist, dist / 2}};
 
-      // In-place R2C: real → complex in same buffer
-      r2c_inplace_plan_ =
-          traits::plan_many_dft_r2c(1, n, batch, padded_real, NULL, stride, dist, // real input (dist in scalars)
-                                    fftw_data, NULL, stride, dist / 2,             // complex output (dist/2 in complex)
-                                    plan_flag_);
+      r2c_inplace_plan_ = traits::plan_guru64_dft_r2c(1, dims, 1, howmany_dims, padded_real,
+                                                      fftw_data, plan_flag_);
     }
 
     /**
@@ -390,20 +393,21 @@ namespace parafaft
      * @param stride Element stride (typically 1 for contiguous data)
      * @param dist Distance between batches (padded: 2*(N/2+1) scalars)
      */
-    void create_c2r_inplace_plan(int length,              // Real-space output length N
-                                 int batch,               // Number of transforms
-                                 FloatType *padded_real,  // Padded real buffer (also used as complex input)
-                                 int stride,              // Stride
-                                 int dist                 // Distance between batches (padded: 2*(N/2+1))
+    void create_c2r_inplace_plan(int length,               // Real-space output length N
+                                 std::size_t batch,         // Number of transforms
+                                 FloatType *padded_real,    // Padded real buffer (also used as complex input)
+                                 std::ptrdiff_t stride,     // Stride
+                                 std::ptrdiff_t dist        // Distance between batches (padded: 2*(N/2+1))
     )
     {
-      int n[] = {length};
       fftw_complex_t *fftw_data = reinterpret_cast<fftw_complex_t *>(padded_real);
+      // For C2R: input dist is dist/2 (complex elements), output dist is dist (scalars).
+      typename traits::iodim64_t dims[] = {{static_cast<std::ptrdiff_t>(length), stride, stride}};
+      typename traits::iodim64_t howmany_dims[] = {
+          {static_cast<std::ptrdiff_t>(batch), dist / 2, dist}};
 
-      // In-place C2R: complex → real in same buffer
-      c2r_inplace_plan_ =
-          traits::plan_many_dft_c2r(1, n, batch, fftw_data, NULL, stride, dist / 2, // dist/2 for complex stride
-                                    padded_real, NULL, stride, dist, plan_flag_);
+      c2r_inplace_plan_ = traits::plan_guru64_dft_c2r(1, dims, 1, howmany_dims, fftw_data,
+                                                      padded_real, plan_flag_);
     }
 
     /**

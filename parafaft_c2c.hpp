@@ -189,9 +189,9 @@ public:
       // Compute maximum buffer size across all stages for ping-pong allocation
       max_stage_size_ = 0;
       for (int stage = 0; stage < D; ++stage) {
-        int size = 1;
+        std::size_t size = 1;
         for (int i = 0; i < D; ++i) {
-          size *= stage_shapes_[stage][i];
+          size *= static_cast<std::size_t>(stage_shapes_[stage][i]);
         }
         max_stage_size_ = std::max(max_stage_size_, size);
       }
@@ -232,33 +232,34 @@ public:
       // Compute batch count and stride/dist based on axis position
       if (axis == D - 1) {
         // Last axis: contiguous FFTs
-        int batch = 1;
+        std::size_t batch = 1;
         for (int i = 0; i < D - 1; ++i) {
-          batch *= stage_shapes_[stage][i];
+          batch *= static_cast<std::size_t>(stage_shapes_[stage][i]);
         }
         backend_.create_stage_plan(stage, length, batch, scratch_buffer_.data(),
                                    1, length);
 
       } else if (axis == 0) {
         // First axis: strided FFTs
-        int batch = 1;
+        std::size_t batch = 1;
         for (int i = 1; i < D; ++i) {
-          batch *= stage_shapes_[stage][i];
+          batch *= static_cast<std::size_t>(stage_shapes_[stage][i]);
         }
-        int stride = batch;
+        std::ptrdiff_t stride = static_cast<std::ptrdiff_t>(batch);
         backend_.create_stage_plan(stage, length, batch, scratch_buffer_.data(),
                                    stride, 1);
 
       } else {
         // Middle axis: need to handle via loops in perform_fft_on_buffer
         // Create plan for trailing batch only
-        int trailing_size = 1;
+        std::size_t trailing_size = 1;
         for (int i = axis + 1; i < D; ++i) {
-          trailing_size *= stage_shapes_[stage][i];
+          trailing_size *= static_cast<std::size_t>(stage_shapes_[stage][i]);
         }
+        std::ptrdiff_t trailing_dist = static_cast<std::ptrdiff_t>(trailing_size);
         // Plan will be called multiple times for leading dimensions
         backend_.create_stage_plan(stage, length, trailing_size,
-                                   scratch_buffer_.data(), trailing_size, 1);
+                                   scratch_buffer_.data(), trailing_dist, 1);
       }
     }
   }
@@ -322,10 +323,10 @@ public:
    *
    * @return Total number of complex elements in the local array.
    */
-  int get_local_size() const {
-    int size = 1;
+  std::size_t get_local_size() const {
+    std::size_t size = 1;
     for (int i = 0; i < D; ++i) {
-      size *= stage_shapes_[0][i];
+      size *= static_cast<std::size_t>(stage_shapes_[0][i]);
     }
     return size;
   }
@@ -340,7 +341,7 @@ public:
    *
    * @return Minimum number of complex elements the data buffer must hold.
    */
-  int get_required_output_size() const { return max_stage_size_; }
+  std::size_t get_required_output_size() const { return max_stage_size_; }
 
   /**
    * @brief Get the local array shape (stage 0 distribution).
@@ -497,9 +498,9 @@ public:
     } else {
       // Odd swaps: src ends at opposite → start with scratch so result is in
       // data
-      int size0 = 1;
+      std::size_t size0 = 1;
       for (int i = 0; i < D; ++i)
-        size0 *= stage_shapes_[0][i];
+        size0 *= static_cast<std::size_t>(stage_shapes_[0][i]);
       backend_.memcpy(scratch_buffer_.data(), data, size0 * sizeof(Complex));
       src = scratch_buffer_.data();
       dst = data;
@@ -588,9 +589,9 @@ public:
     } else {
       // Odd swaps: src ends at opposite → start with scratch so result is in
       // data
-      int sizeD = 1;
+      std::size_t sizeD = 1;
       for (int i = 0; i < D; ++i)
-        sizeD *= stage_shapes_[D - 1][i];
+        sizeD *= static_cast<std::size_t>(stage_shapes_[D - 1][i]);
       backend_.memcpy(scratch_buffer_.data(), data, sizeD * sizeof(Complex));
       src = scratch_buffer_.data();
       dst = data;
@@ -811,21 +812,23 @@ private:
       // Need to loop over leading dimensions
     } else {
       // Number of independent "batches" (loop over these)
-      int leading_size = 1;
+      std::size_t leading_size = 1;
       for (int i = 0; i < axis; ++i) {
-        leading_size *= stage_shapes_[stage][i];
+        leading_size *= static_cast<std::size_t>(stage_shapes_[stage][i]);
       }
 
       // Number of FFTs per batch (can do simultaneously)
-      int trailing_size = 1;
+      std::size_t trailing_size = 1;
       for (int i = axis + 1; i < D; ++i) {
-        trailing_size *= stage_shapes_[stage][i];
+        trailing_size *= static_cast<std::size_t>(stage_shapes_[stage][i]);
       }
 
       // Execute plan for each leading slice
-      for (int i = 0; i < leading_size; ++i) {
+      const std::size_t slice_stride =
+          static_cast<std::size_t>(global_shape_[axis]) * trailing_size;
+      for (std::size_t i = 0; i < leading_size; ++i) {
         // Pointer to start of this batch
-        Complex *base_ptr = buffer + i * global_shape_[axis] * trailing_size;
+        Complex *base_ptr = buffer + i * slice_stride;
         backend_.execute_stage(stage, direction, base_ptr);
       }
     }
@@ -946,7 +949,7 @@ private:
   /// Local array shape at each stage: stage_shapes_[stage][axis]
   std::vector<std::vector<int>> stage_shapes_;
   /// Maximum buffer size across all stages (for ping-pong allocation)
-  int max_stage_size_;
+  std::size_t max_stage_size_;
   /// Scratch buffer for ping-pong with the user's data buffer
   ComplexBuffer scratch_buffer_;
   /// Pack buffer for contiguous MPI exchange (GPU backends only)

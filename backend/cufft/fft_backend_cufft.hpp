@@ -22,6 +22,8 @@
 #include <cuda/std/complex>
 #include <cuda_runtime.h>
 #include <cufft.h>
+#include <cstddef>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -284,25 +286,24 @@ public:
    * @param stride Stride between consecutive elements in a transform
    * @param dist Distance between first elements of consecutive transforms
    */
-  void create_stage_plan(int stage, int length, int batch, Complex *data,
-                         int stride, int dist) {
+  void create_stage_plan(int stage, int length, std::size_t batch, Complex *data,
+                         std::ptrdiff_t stride, std::ptrdiff_t dist) {
+    (void)data;
     int n[] = {length};
-    // IMPORTANT: Unlike FFTW, cuFFT ignores stride/dist when inembed/onembed
-    // are NULL! We must explicitly set inembed/onembed = n to match FFTW
-    // behavior. With embed = n, cuFFT will use the provided stride and dist
-    // values.
     int inembed[] = {length};
     int onembed[] = {length};
 
-    // Create forward plan
-    check_cufft(cufftPlanMany(&forward_plans_[stage], 1, n, inembed, stride,
-                              dist, onembed, stride, dist, traits::c2c_type, batch),
+    int batch_i = narrow_plan_arg(batch, "batch");
+    int stride_i = narrow_plan_arg(stride, "stride");
+    int dist_i = narrow_plan_arg(dist, "dist");
+
+    check_cufft(cufftPlanMany(&forward_plans_[stage], 1, n, inembed, stride_i,
+                              dist_i, onembed, stride_i, dist_i, traits::c2c_type, batch_i),
                 "cufftPlanMany C2C forward");
     cufftSetStream(forward_plans_[stage], stream_);
 
-    // Create backward plan
-    check_cufft(cufftPlanMany(&backward_plans_[stage], 1, n, inembed, stride,
-                              dist, onembed, stride, dist, traits::c2c_type, batch),
+    check_cufft(cufftPlanMany(&backward_plans_[stage], 1, n, inembed, stride_i,
+                              dist_i, onembed, stride_i, dist_i, traits::c2c_type, batch_i),
                 "cufftPlanMany C2C backward");
     cufftSetStream(backward_plans_[stage], stream_);
   }
@@ -354,26 +355,26 @@ public:
    */
   // Create in-place R2C plan for padded memory optimization
   void create_r2c_inplace_plan(
-      int length,              // Real-space FFT length N
-      int batch,               // Number of 1D transforms
-      FloatType *padded_real,  // Padded real buffer (for size calculation only)
-      int stride,              // Stride (typically 1)
-      int dist                 // Distance between batches (2*(N/2+1) scalars)
+      int length,                 // Real-space FFT length N
+      std::size_t batch,           // Number of 1D transforms
+      FloatType *padded_real,      // Padded real buffer (for size calculation only)
+      std::ptrdiff_t stride,       // Stride (typically 1)
+      std::ptrdiff_t dist          // Distance between batches (2*(N/2+1) scalars)
   ) {
     (void)padded_real;
-    // R2C: N real inputs -> N/2+1 complex outputs
-    // IMPORTANT: Unlike FFTW, cuFFT ignores stride/dist when inembed/onembed
-    // are NULL! We must explicitly set inembed/onembed to match FFTW behavior.
     int n[] = {length};
-    int inembed[] = {length};         // Real input embed = N
-    int onembed[] = {length / 2 + 1}; // Complex output embed = N/2+1
+    int inembed[] = {length};
+    int onembed[] = {length / 2 + 1};
 
-    // Note: output dist is half of input dist (complex elements vs scalars)
-    check_cufft(cufftPlanMany(&r2c_plan_, 1, n, inembed, stride,
-                              dist, // Real input layout
-                              onembed, stride,
-                              dist / 2, // Complex output layout
-                              traits::r2c_type, batch),
+    int batch_i = narrow_plan_arg(batch, "batch");
+    int stride_i = narrow_plan_arg(stride, "stride");
+    int dist_i = narrow_plan_arg(dist, "dist");
+
+    check_cufft(cufftPlanMany(&r2c_plan_, 1, n, inembed, stride_i,
+                              dist_i,
+                              onembed, stride_i,
+                              dist_i / 2,
+                              traits::r2c_type, batch_i),
                 "cufftPlanMany R2C");
     cufftSetStream(r2c_plan_, stream_);
   }
@@ -420,24 +421,25 @@ public:
    * @param dist Distance between batches (padded: 2*(N/2+1) scalars)
    */
   // Create in-place C2R plan for padded memory optimization
-  void create_c2r_inplace_plan(int length,              // Real-space output length N
-                               int batch,               // Number of transforms
-                               FloatType *padded_real,  // Padded real buffer
-                               int stride,              // Stride (typically 1)
-                               int dist                 // Distance between batches (2*(N/2+1))
+  void create_c2r_inplace_plan(int length,                 // Real-space output length N
+                               std::size_t batch,           // Number of transforms
+                               FloatType *padded_real,      // Padded real buffer
+                               std::ptrdiff_t stride,       // Stride (typically 1)
+                               std::ptrdiff_t dist          // Distance between batches (2*(N/2+1))
   ) {
     (void)padded_real;
-    // C2R: N/2+1 complex inputs -> N real outputs
-    // IMPORTANT: Unlike FFTW, cuFFT ignores stride/dist when inembed/onembed
-    // are NULL! We must explicitly set inembed/onembed to match FFTW behavior.
     int n[] = {length};
-    int inembed[] = {length / 2 + 1}; // Complex input embed = N/2+1
-    int onembed[] = {length};         // Real output embed = N
+    int inembed[] = {length / 2 + 1};
+    int onembed[] = {length};
 
-    check_cufft(cufftPlanMany(&c2r_plan_, 1, n, inembed, stride,
-                              dist / 2,              // Complex input layout
-                              onembed, stride, dist, // Real output layout
-                              traits::c2r_type, batch),
+    int batch_i = narrow_plan_arg(batch, "batch");
+    int stride_i = narrow_plan_arg(stride, "stride");
+    int dist_i = narrow_plan_arg(dist, "dist");
+
+    check_cufft(cufftPlanMany(&c2r_plan_, 1, n, inembed, stride_i,
+                              dist_i / 2,
+                              onembed, stride_i, dist_i,
+                              traits::c2r_type, batch_i),
                 "cufftPlanMany C2R");
     cufftSetStream(c2r_plan_, stream_);
   }
@@ -547,6 +549,17 @@ public:
   static void ipc_close_handle(void *ptr) { cudaIpcCloseMemHandle(ptr); }
 
 private:
+  template <typename T>
+  static int narrow_plan_arg(T value, const char *name) {
+    using Limit = std::numeric_limits<int>;
+    if (value < static_cast<T>(Limit::min()) || value > static_cast<T>(Limit::max())) {
+      throw std::runtime_error(std::string("cuFFT plan parameter '") + name +
+                               "' exceeds int range; cufftPlanMany is int-limited — "
+                               "use cufftXtMakePlanMany for 64-bit batches.");
+    }
+    return static_cast<int>(value);
+  }
+
   int num_stages_; ///< Number of FFT stages
 
   // C2C plans (for general complex-to-complex transforms)

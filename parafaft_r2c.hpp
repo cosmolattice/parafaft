@@ -212,11 +212,11 @@ public:
       cache_exchange_types();
 
       // Compute maximum complex buffer size across all stages
-      int max_complex_size = 0;
+      std::size_t max_complex_size = 0;
       for (int stage = 0; stage < D; ++stage) {
-        int size = 1;
+        std::size_t size = 1;
         for (int i = 0; i < D; ++i) {
-          size *= stage_output_shapes_[stage][i];
+          size *= static_cast<std::size_t>(stage_output_shapes_[stage][i]);
         }
         max_complex_size = std::max(max_complex_size, size);
       }
@@ -355,9 +355,9 @@ public:
     } else {
       // Odd swaps: start at scratch_b, end at padded
       // Need to copy R2C output to scratch_b_ first
-      int stage0_complex_size = 1;
+      std::size_t stage0_complex_size = 1;
       for (int i = 0; i < D; ++i) {
-        stage0_complex_size *= stage_output_shapes_[0][i];
+        stage0_complex_size *= static_cast<std::size_t>(stage_output_shapes_[0][i]);
       }
       backend_.memcpy(scratch_b_.data(), padded_as_complex,
                       stage0_complex_size * sizeof(Complex));
@@ -465,9 +465,9 @@ public:
     } else {
       // Odd swaps: start at scratch_b, end at padded
       // Must copy input from padded to scratch_b to start there
-      int input_size = 1;
+      std::size_t input_size = 1;
       for (int i = 0; i < D; ++i) {
-        input_size *= stage_shapes_[D - 1][i];
+        input_size *= static_cast<std::size_t>(stage_shapes_[D - 1][i]);
       }
       backend_.memcpy(scratch_b_.data(), padded_as_complex,
                       input_size * sizeof(Complex));
@@ -522,10 +522,10 @@ public:
    *
    * @return Total number of real elements in the local input array.
    */
-  int get_local_real_size() const {
-    int size = 1;
+  std::size_t get_local_real_size() const {
+    std::size_t size = 1;
     for (int i = 0; i < D; ++i) {
-      size *= stage_shapes_[0][i];
+      size *= static_cast<std::size_t>(stage_shapes_[0][i]);
     }
     return size;
   }
@@ -543,22 +543,22 @@ public:
    *
    * @return Buffer size in doubles (divide by 2 for complex element count).
    */
-  int get_required_output_size() const {
+  std::size_t get_required_output_size() const {
     // Stage 0 padded real buffer size
-    int stage0_padded_size = 1;
+    std::size_t stage0_padded_size = 1;
     for (int i = 0; i < D - 1; ++i) {
-      stage0_padded_size *= stage_shapes_[0][i];
+      stage0_padded_size *= static_cast<std::size_t>(stage_shapes_[0][i]);
     }
-    stage0_padded_size *=
-        2 * (global_real_shape_[D - 1] / 2 + 1); // 2 doubles per complex
+    stage0_padded_size *= static_cast<std::size_t>(
+        2 * (global_real_shape_[D - 1] / 2 + 1)); // 2 doubles per complex
 
     // Maximum complex size across all stages (including intermediate
     // redistributions)
-    int max_complex_size = 0;
+    std::size_t max_complex_size = 0;
     for (int stage = 0; stage < D; ++stage) {
-      int size = 1;
+      std::size_t size = 1;
       for (int i = 0; i < D; ++i) {
-        size *= stage_output_shapes_[stage][i];
+        size *= static_cast<std::size_t>(stage_output_shapes_[stage][i]);
       }
       max_complex_size = std::max(max_complex_size, size);
     }
@@ -597,10 +597,10 @@ public:
    *
    * @return Total number of complex elements in the local output array.
    */
-  int get_local_complex_size() const {
-    int size = 1;
+  std::size_t get_local_complex_size() const {
+    std::size_t size = 1;
     for (int i = 0; i < D; ++i) {
-      size *= stage_shapes_[D - 1][i];
+      size *= static_cast<std::size_t>(stage_shapes_[D - 1][i]);
     }
     return size;
   }
@@ -738,9 +738,9 @@ private:
     const int padded_stride = 2 * complex_last_dim;
 
     // Compute batch size (product of all dimensions except last)
-    int batch = 1;
+    std::size_t batch = 1;
     for (int i = 0; i < D - 1; ++i) {
-      batch *= stage_shapes_[0][i];
+      batch *= static_cast<std::size_t>(stage_shapes_[0][i]);
     }
 
     // Single 2D copy: contiguous real rows → padded rows
@@ -765,9 +765,9 @@ private:
     const int padded_stride = 2 * complex_last_dim;
 
     // Compute batch size (product of all dimensions except last)
-    int batch = 1;
+    std::size_t batch = 1;
     for (int i = 0; i < D - 1; ++i) {
-      batch *= stage_shapes_[0][i];
+      batch *= static_cast<std::size_t>(stage_shapes_[0][i]);
     }
 
     // Single 2D copy: padded rows → contiguous real rows
@@ -1026,9 +1026,9 @@ private:
    */
   void create_backend_plans() {
     // Stage 0: R2C plan
-    int batch0 = 1;
+    std::size_t batch0 = 1;
     for (int i = 0; i < D - 1; ++i) {
-      batch0 *= stage_shapes_[0][i];
+      batch0 *= static_cast<std::size_t>(stage_shapes_[0][i]);
     }
     int real_length = global_real_shape_[D - 1];
     int complex_length = global_complex_shape_[D - 1];
@@ -1039,7 +1039,7 @@ private:
     // one buffer to be executed on any buffer with compatible alignment/layout.
     // Note: FFTW_MEASURE may write to the buffer during planning, but
     // scratch_b_ contains no useful data at construction time.
-    int padded_dist = 2 * complex_length; // 2*(N/2+1) scalars per transform
+    std::ptrdiff_t padded_dist = 2 * complex_length; // 2*(N/2+1) scalars per transform
     FloatType *plan_buf = reinterpret_cast<FloatType *>(scratch_b_.data());
     backend_.create_r2c_inplace_plan(real_length, batch0, plan_buf, 1,
                                      padded_dist);
@@ -1054,21 +1054,22 @@ private:
 
       if (axis == 0) {
         // First axis: strided FFTs
-        int batch = 1;
+        std::size_t batch = 1;
         for (int i = 1; i < D; ++i) {
-          batch *= stage_shapes_[stage][i];
+          batch *= static_cast<std::size_t>(stage_shapes_[stage][i]);
         }
-        int stride = batch;
+        std::ptrdiff_t stride = static_cast<std::ptrdiff_t>(batch);
         backend_.create_stage_plan(stage, length, batch, scratch_b_.data(),
                                    stride, 1);
       } else {
         // Middle axes: need to handle via loops in perform_fft_on_buffer
-        int trailing_size = 1;
+        std::size_t trailing_size = 1;
         for (int i = axis + 1; i < D; ++i) {
-          trailing_size *= stage_shapes_[stage][i];
+          trailing_size *= static_cast<std::size_t>(stage_shapes_[stage][i]);
         }
+        std::ptrdiff_t trailing_dist = static_cast<std::ptrdiff_t>(trailing_size);
         backend_.create_stage_plan(stage, length, trailing_size,
-                                   scratch_b_.data(), trailing_size, 1);
+                                   scratch_b_.data(), trailing_dist, 1);
       }
     }
   }
@@ -1093,19 +1094,20 @@ private:
       // Middle axes: loop over leading dimensions
       // Each iteration processes transforms along 'axis' for one slice of
       // leading dims
-      int leading_size = 1;
+      std::size_t leading_size = 1;
       for (int i = 0; i < axis; ++i) {
-        leading_size *= stage_shapes_[stage][i];
+        leading_size *= static_cast<std::size_t>(stage_shapes_[stage][i]);
       }
 
-      int trailing_size = 1;
+      std::size_t trailing_size = 1;
       for (int i = axis + 1; i < D; ++i) {
-        trailing_size *= stage_shapes_[stage][i];
+        trailing_size *= static_cast<std::size_t>(stage_shapes_[stage][i]);
       }
 
-      for (int i = 0; i < leading_size; ++i) {
-        Complex *base_ptr =
-            buffer + i * global_complex_shape_[axis] * trailing_size;
+      const std::size_t slice_stride =
+          static_cast<std::size_t>(global_complex_shape_[axis]) * trailing_size;
+      for (std::size_t i = 0; i < leading_size; ++i) {
+        Complex *base_ptr = buffer + i * slice_stride;
         backend_.execute_stage(stage, direction, base_ptr);
       }
     }

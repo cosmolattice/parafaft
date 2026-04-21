@@ -31,8 +31,9 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
     std::cout << "Creating ParaFaFT..." << std::endl;
     parafaft::ParaFaFT_C2C<D, parafaft::FFTWBackend<>> fft(global_shape.data());
 
-    int local_size = fft.get_local_size();
-    int buffer_size = fft.get_required_output_size();
+    std::size_t local_size = fft.get_local_size();
+    std::size_t buffer_size = fft.get_required_output_size();
+    (void)local_size;
     int local_shape[D];
     int global_start[D];
     fft.get_local_shape(local_shape);
@@ -50,7 +51,7 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
         double x = (global_start[d] + lidx[d]) - center;
         r2 += x * x;
       }
-      int local_flat = nd_index<D>(lidx.data(), local_shape);
+      std::size_t local_flat = nd_index<D>(lidx.data(), local_shape);
       local_data[local_flat] =
           std::complex<double>(std::exp(-r2 / (2.0 * sigma * sigma)), 0.0);
     });

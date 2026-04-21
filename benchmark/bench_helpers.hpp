@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <complex>
+#include <cstddef>
 #include <cstdlib>
 #include <fftw3-mpi.h>
 #include <fftw3.h>
@@ -21,16 +22,17 @@
 
 namespace parafaft_bench {
 
-template <int D> inline int nd_index(const int idx[D], const int shape[D]) {
-  int flat = idx[0];
+template <int D>
+inline std::size_t nd_index(const int idx[D], const int shape[D]) {
+  std::size_t flat = static_cast<std::size_t>(idx[0]);
   for (int d = 1; d < D; ++d)
-    flat = flat * shape[d] + idx[d];
+    flat = flat * static_cast<std::size_t>(shape[d]) + static_cast<std::size_t>(idx[d]);
   return flat;
 }
 
 template <int D>
-inline int nd_index(const std::array<int, D> &idx,
-                    const std::array<int, D> &shape) {
+inline std::size_t nd_index(const std::array<int, D> &idx,
+                            const std::array<int, D> &shape) {
   return nd_index<D>(idx.data(), shape.data());
 }
 
@@ -38,16 +40,16 @@ template <int D>
 void iterate_nd(
     const int shape[D],
     const std::function<void(const std::array<int, D> &)> &callback) {
-  int total = 1;
+  std::ptrdiff_t total = 1;
   for (int d = 0; d < D; ++d)
-    total *= shape[d];
+    total *= static_cast<std::ptrdiff_t>(shape[d]);
 
 #pragma omp parallel for schedule(static)
-  for (int i = 0; i < total; ++i) {
+  for (std::ptrdiff_t i = 0; i < total; ++i) {
     std::array<int, D> idx;
-    int rem = i;
+    std::ptrdiff_t rem = i;
     for (int d = D - 1; d >= 0; --d) {
-      idx[d] = rem % shape[d];
+      idx[d] = static_cast<int>(rem % shape[d]);
       rem /= shape[d];
     }
     callback(idx);

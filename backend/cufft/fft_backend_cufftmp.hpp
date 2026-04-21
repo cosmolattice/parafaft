@@ -27,6 +27,7 @@
 #include "./fft_backend_cufft.hpp" // reuse cuvector<T>
 
 #include <array>
+#include <cstddef>
 #include <stdexcept>
 #include <string>
 
@@ -85,7 +86,7 @@ public:
     int global_start[D];
     int output_shape[D];
     int output_start[D];
-    int required_size;
+    std::size_t required_size;
   };
 
   /**
@@ -242,11 +243,11 @@ public:
   }
 
   // Unused stubs — required by interface but never called when handles_distributed
-  void create_stage_plan(int, int, int, Complex *, int, int) {}
+  void create_stage_plan(int, int, std::size_t, Complex *, std::ptrdiff_t, std::ptrdiff_t) {}
   void execute_stage(int, FFTDirection, Complex *) {}
-  void create_r2c_inplace_plan(int, int, double *, int, int) {}
+  void create_r2c_inplace_plan(int, std::size_t, double *, std::ptrdiff_t, std::ptrdiff_t) {}
   void execute_r2c_inplace(double *) {}
-  void create_c2r_inplace_plan(int, int, double *, int, int) {}
+  void create_c2r_inplace_plan(int, std::size_t, double *, std::ptrdiff_t, std::ptrdiff_t) {}
   void execute_c2r_inplace(double *) {}
 
 private:
@@ -326,12 +327,12 @@ private:
     // Required buffer size (in complex elements for C2C, doubles for R2C)
     info_.required_size = 1;
     for (int i = 0; i < D; ++i) {
-      info_.required_size *= info_.local_shape[i];
+      info_.required_size *= static_cast<std::size_t>(info_.local_shape[i]);
     }
     // Take max of input and output sizes
-    int output_size = 1;
+    std::size_t output_size = 1;
     for (int i = 0; i < D; ++i) {
-      output_size *= info_.output_shape[i];
+      output_size *= static_cast<std::size_t>(info_.output_shape[i]);
     }
     if (output_size > info_.required_size) {
       info_.required_size = output_size;

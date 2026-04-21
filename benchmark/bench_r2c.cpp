@@ -35,9 +35,9 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
     fft.get_local_real_shape(local_real_shape);
     fft.get_real_global_start(real_start);
 
-    int local_padded_size = fft.get_required_output_size();
+    std::size_t local_padded_size = fft.get_required_output_size();
 
-    const int padded_last = local_real_shape[D - 1] + 2;
+    const std::size_t padded_last = static_cast<std::size_t>(local_real_shape[D - 1] + 2);
 
     std::vector<double> padded_buffer(local_padded_size, 0.0);
 
@@ -53,10 +53,11 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
       }
       double value = std::exp(-r2 / (2.0 * sigma * sigma));
 
-      int padded_flat = lidx[0];
+      std::size_t padded_flat = static_cast<std::size_t>(lidx[0]);
       for (int d = 1; d < D - 1; ++d)
-        padded_flat = padded_flat * local_real_shape[d] + lidx[d];
-      padded_flat = padded_flat * padded_last + lidx[D - 1];
+        padded_flat = padded_flat * static_cast<std::size_t>(local_real_shape[d]) +
+                      static_cast<std::size_t>(lidx[d]);
+      padded_flat = padded_flat * padded_last + static_cast<std::size_t>(lidx[D - 1]);
 
       padded_buffer[padded_flat] = value;
     });

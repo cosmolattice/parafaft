@@ -42,10 +42,11 @@ private:
   std::vector<double> values_;
 };
 
-template <int D> inline int nd_index(const int idx[D], const int shape[D]) {
-  int flat = idx[0];
+template <int D>
+inline std::size_t nd_index(const int idx[D], const int shape[D]) {
+  std::size_t flat = static_cast<std::size_t>(idx[0]);
   for (int d = 1; d < D; ++d)
-    flat = flat * shape[d] + idx[d];
+    flat = flat * static_cast<std::size_t>(shape[d]) + static_cast<std::size_t>(idx[d]);
   return flat;
 }
 
@@ -54,11 +55,11 @@ void iterate_nd(
     const int shape[D],
     const std::function<void(const std::array<int, D> &)> &callback) {
   std::array<int, D> idx{};
-  int total = 1;
+  std::ptrdiff_t total = 1;
   for (int d = 0; d < D; ++d)
-    total *= shape[d];
+    total *= static_cast<std::ptrdiff_t>(shape[d]);
 
-  for (int i = 0; i < total; ++i) {
+  for (std::ptrdiff_t i = 0; i < total; ++i) {
     callback(idx);
     for (int d = D - 1; d >= 0; --d) {
       if (++idx[d] < shape[d])
@@ -108,8 +109,9 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
     parafaft::ParaFaFT_C2C<D, parafaft::CuFFTBackend<>> fft(
         global_shape.data());
 
-    int local_size = fft.get_local_size();
-    int buffer_size = fft.get_required_output_size();
+    std::size_t local_size = fft.get_local_size();
+    std::size_t buffer_size = fft.get_required_output_size();
+    (void)local_size;
     int local_shape[D];
     int global_start[D];
     fft.get_local_shape(local_shape);
@@ -128,7 +130,7 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
         double x = (global_start[d] + lidx[d]) - center;
         r2 += x * x;
       }
-      int local_flat = nd_index<D>(lidx.data(), local_shape);
+      std::size_t local_flat = nd_index<D>(lidx.data(), local_shape);
       host_buffer[local_flat] =
           std::complex<double>(std::exp(-r2 / (2.0 * sigma * sigma)), 0.0);
     });
