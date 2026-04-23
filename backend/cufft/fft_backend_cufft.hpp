@@ -26,6 +26,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #ifndef PARAFAFT_GPU_ALLTOALLW
@@ -552,7 +553,14 @@ private:
   template <typename T>
   static int narrow_plan_arg(T value, const char *name) {
     using Limit = std::numeric_limits<int>;
-    if (value < static_cast<T>(Limit::min()) || value > static_cast<T>(Limit::max())) {
+    bool out_of_range;
+    if constexpr (std::is_signed_v<T>) {
+      out_of_range = value < static_cast<T>(Limit::min()) ||
+                     value > static_cast<T>(Limit::max());
+    } else {
+      out_of_range = value > static_cast<T>(Limit::max());
+    }
+    if (out_of_range) {
       throw std::runtime_error(std::string("cuFFT plan parameter '") + name +
                                "' exceeds int range; cufftPlanMany is int-limited — "
                                "use cufftXtMakePlanMany for 64-bit batches.");
