@@ -695,6 +695,11 @@ private:
         init_exchange_geometry(bwd_exchange_geom_[t], nparts_[t], D,
                                stage_shapes_[t + 1].data(), recv_axis,
                                stage_shapes_[t].data(), send_axis);
+        // Exchange per-peer send displacements for the P2P/IPC read path.
+        // Same subcomm the fwd/bwd exchange of transition t runs over.
+        MPI_Comm geom_comm = subcomms_[D - 2 - t];
+        init_remote_send_displs(fwd_exchange_geom_[t], geom_comm);
+        init_remote_send_displs(bwd_exchange_geom_[t], geom_comm);
       }
     }
   }
