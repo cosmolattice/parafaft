@@ -100,13 +100,32 @@ template <int D> int compare_cuFFTBackend(const int N, int rank, int shape_id)
   });
 
   // ---- Copy to device -------------------------------------------------------
+  // Allocations are checked: an unchecked failure leaves a null pointer, and
+  // the transform then fails with "invalid argument" from a later copy, which
+  // hides the actual cause (the grid not fitting in device memory).
+  auto checked_malloc = [&](void **p, std::size_t bytes, const char *what) {
+    cudaError_t e = cudaMalloc(p, bytes);
+    if (e != cudaSuccess || *p == nullptr) {
+      std::size_t free_bytes = 0, total_bytes = 0;
+      cudaMemGetInfo(&free_bytes, &total_bytes);
+      std::cerr << "Rank " << rank << ": cudaMalloc of " << (bytes >> 20)
+                << " MiB for " << what << " failed (" << cudaGetErrorString(e)
+                << "); " << (free_bytes >> 20) << " MiB free of "
+                << (total_bytes >> 20) << " MiB. N is too large for this GPU."
+                << std::endl;
+      MPI_Abort(MPI_COMM_WORLD, 1);
+    }
+  };
+
   double *d_data = nullptr;
-  cudaMalloc((void **)&d_data, local_real_size * sizeof(double));
+  checked_malloc((void **)&d_data, local_real_size * sizeof(double), "input");
   cudaMemcpy(d_data, local_data.data(), local_real_size * sizeof(double), cudaMemcpyHostToDevice);
 
   // Allocate device memory for complex output
   parafaft::CuFFTBackend<>::Complex *d_result = nullptr;
-  cudaMalloc((void **)&d_result, (local_real_size / 2) * sizeof(parafaft::CuFFTBackend<>::Complex));
+  checked_malloc((void **)&d_result,
+                 (local_real_size / 2) * sizeof(parafaft::CuFFTBackend<>::Complex),
+                 "output");
 
   // ---- Forward FFT ----------------------------------------------------------
   fft.forward(d_data, d_result);

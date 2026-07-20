@@ -43,8 +43,19 @@ namespace parafaft {
  */
 static void check_cuda(cudaError_t result, const char *operation) {
   if (result != cudaSuccess) {
+    // Report device memory alongside the error. Exhaustion often surfaces
+    // indirectly — a failed asynchronous launch is reported by whichever call
+    // comes next, so the operation named here is frequently not the one at
+    // fault. Seeing free vs total immediately distinguishes "out of memory"
+    // from a genuine argument error at the reported call site.
+    std::string detail;
+    size_t free_bytes = 0, total_bytes = 0;
+    if (cudaMemGetInfo(&free_bytes, &total_bytes) == cudaSuccess) {
+      detail = " [device memory: " + std::to_string(free_bytes >> 20) +
+               " MiB free of " + std::to_string(total_bytes >> 20) + " MiB]";
+    }
     throw std::runtime_error(std::string("CUDA error in ") + operation + ": " +
-                             cudaGetErrorString(result));
+                             cudaGetErrorString(result) + detail);
   }
 }
 
@@ -495,9 +506,34 @@ public:
    */
   void memcpy2d(void *dst, size_t dpitch, const void *src, size_t spitch,
                 size_t width, size_t height) const {
-    check_cuda(cudaMemcpy2DAsync(dst, dpitch, src, spitch, width, height,
-                                 cudaMemcpyDefault, stream_),
-               "cudaMemcpy2DAsync");
+    cudaError_t err = cudaMemcpy2DAsync(dst, dpitch, src, spitch, width, height,
+                                        cudaMemcpyDefault, stream_);
+    if (err != cudaSuccess) {
+      // Include the descriptor: a rejected 2D copy is almost always a bad
+      // geometry (width above a pitch, or an extent past the allocation),
+      // and the numbers say which immediately.
+      auto describe = [](const void *p) {
+        cudaPointerAttributes a{};
+        if (cudaPointerGetAttributes(&a, p) != cudaSuccess) {
+          cudaGetLastError();
+          return std::string("unknown");
+        }
+        switch (a.type) {
+        case cudaMemoryTypeDevice: return std::string("device");
+        case cudaMemoryTypeHost: return std::string("host");
+        case cudaMemoryTypeManaged: return std::string("managed");
+        default: return std::string("unregistered");
+        }
+      };
+      std::string what = "cudaMemcpy2DAsync(dpitch=" + std::to_string(dpitch) +
+                         ", spitch=" + std::to_string(spitch) +
+                         ", width=" + std::to_string(width) +
+                         ", height=" + std::to_string(height) +
+                         ", total=" + std::to_string(width * height) +
+                         ", dst=" + describe(dst) + ", src=" + describe(src) +
+                         ")";
+      check_cuda(err, what.c_str());
+    }
   }
 
   /**

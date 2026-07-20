@@ -132,9 +132,24 @@ void run_benchmark(int N, int rank, int mpi_size, int iterations) {
       host_buffer[padded_flat] = value;
     });
 
-    // Allocate device buffer and copy host data
+    // Allocate device buffer and copy host data. Check the allocation: an
+    // unchecked failure leaves d_data null, and the transform then reports
+    // "invalid argument" from whichever copy touches it first, which looks
+    // like a geometry bug rather than the out-of-memory it actually is.
     double *d_data = nullptr;
-    cudaMalloc((void **)&d_data, local_padded_size * sizeof(double));
+    const std::size_t d_data_bytes = local_padded_size * sizeof(double);
+    cudaError_t alloc_err = cudaMalloc((void **)&d_data, d_data_bytes);
+    if (alloc_err != cudaSuccess || d_data == nullptr) {
+      std::size_t free_bytes = 0, total_bytes = 0;
+      cudaMemGetInfo(&free_bytes, &total_bytes);
+      std::cerr << "ERROR: rank " << rank << " could not allocate "
+                << (d_data_bytes >> 20) << " MiB for the input buffer ("
+                << cudaGetErrorString(alloc_err) << "). Device has "
+                << (free_bytes >> 20) << " MiB free of " << (total_bytes >> 20)
+                << " MiB. N=" << N << " does not fit on this many GPUs — "
+                << "use more ranks." << std::endl;
+      MPI_Abort(MPI_COMM_WORLD, 1);
+    }
     cudaMemcpy(d_data, host_buffer.data(), local_padded_size * sizeof(double),
                cudaMemcpyHostToDevice);
 

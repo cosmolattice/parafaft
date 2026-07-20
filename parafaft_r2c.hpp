@@ -241,9 +241,20 @@ public:
       // Allocate ping-pong buffer sized to handle any stage
       scratch_b_.resize(max_complex_size);
 
-      // Allocate pack buffer for manual packing exchange (GPU backends)
+      // Allocate pack buffer for manual packing exchange (GPU backends).
+      // Only transitions that actually redistribute need it: with a single
+      // partition the exchange is an in-order copy that never packs. Skipping
+      // the allocation there matters because this buffer is as large as the
+      // whole local array — a third of the footprint on one rank, which is
+      // the difference between fitting on a GPU and not.
       if constexpr (!Backend::use_alltoallw) {
-        pack_buffer_.resize(max_complex_size);
+        bool needs_pack_buffer = false;
+        for (int t = 0; t < D - 1; ++t) {
+          if (nparts_[t] > 1)
+            needs_pack_buffer = true;
+        }
+        if (needs_pack_buffer)
+          pack_buffer_.resize(max_complex_size);
       }
 
       // Fault the pages in from every worker thread so they are distributed
@@ -251,7 +262,10 @@ public:
       // the planning buffer, which would otherwise first-touch it single-threaded.
       backend_.first_touch(scratch_b_.data(), scratch_b_.size() * sizeof(Complex));
       if constexpr (!Backend::use_alltoallw) {
-        backend_.first_touch(pack_buffer_.data(), pack_buffer_.size() * sizeof(Complex));
+        // May be unallocated when no transition redistributes (single rank).
+        if (pack_buffer_.size() > 0)
+          backend_.first_touch(pack_buffer_.data(),
+                               pack_buffer_.size() * sizeof(Complex));
       }
 
       // Create FFT plans

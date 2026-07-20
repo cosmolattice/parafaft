@@ -521,10 +521,9 @@ inline void exchange_local(
     // unpacking then just moves the array to pack_buf and straight back:
     // element order is unchanged, so the pair reduces to one flat copy.
     //
-    // Skipping them is not only faster — it is required for large grids.
-    // A degenerate 2D copy spanning the full array exceeds the driver's 2D
-    // transfer limit once the array passes 4 GiB (3D R2C double at N=1024 is
-    // ~8.6 GB), which the driver rejects with "invalid argument".
+    // Skipping them also avoids staging the entire array through pack_buf,
+    // which on a single rank is pure waste: two full-array copies and a
+    // buffer as large as the data itself.
     size_t src_total = src_row_bytes * static_cast<size_t>(geom.src_leading);
     size_t dst_total = dst_row_bytes * static_cast<size_t>(geom.dst_leading);
     if (src_row_bytes == src_spitch && dst_row_bytes == dst_dpitch &&
