@@ -87,7 +87,8 @@ private:
 inline int detect_thread_count(MPI_Comm comm) {
   int threads = 1;
 
-#if defined(PARAFAFT_FFTW_OMP)
+  // Honour OMP_NUM_THREADS whichever FFTW threading library is linked (fftw3_omp
+  // or fftw3_threads): it is the explicit "threads per rank" request.
   const char *omp_threads = std::getenv("OMP_NUM_THREADS");
   if (omp_threads != nullptr) {
     threads = std::atoi(omp_threads);
@@ -95,7 +96,6 @@ inline int detect_thread_count(MPI_Comm comm) {
       return threads;
     }
   }
-#endif
 
   const char *kokkos_threads = std::getenv("KOKKOS_NUM_THREADS");
   if (kokkos_threads != nullptr) {
@@ -107,9 +107,15 @@ inline int detect_thread_count(MPI_Comm comm) {
 
   unsigned int hw_threads = std::thread::hardware_concurrency();
   if (hw_threads > 0) {
-    int mpi_size = 1;
-    MPI_Comm_size(comm, &mpi_size);
-    threads = static_cast<int>(hw_threads) / mpi_size;
+    // Split the node's cores among the ranks *sharing that node*. Dividing by the
+    // size of comm would shrink the per-rank thread count as the job scales out.
+    int local_size = 1;
+    MPI_Comm shared_comm;
+    MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, &shared_comm);
+    MPI_Comm_size(shared_comm, &local_size);
+    MPI_Comm_free(&shared_comm);
+
+    threads = static_cast<int>(hw_threads) / local_size;
     if (threads < 1) {
       threads = 1;
     }

@@ -1,4 +1,6 @@
 # Compiled executables
+build*/
+build_cpu/
 examples/example_3d_pencil
 examples/example_4d_pencil
 minimal_3d_fft

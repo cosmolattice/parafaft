@@ -13,24 +13,40 @@
  *     when libfftw3f is found).
  *
  * Threading Support:
- * - If compiled with PARAFAFT_FFTW_THREADS, uses libfftw3_threads (POSIX threads)
- * - If compiled with PARAFAFT_FFTW_OMP, uses fftw3_omp (OpenMP)
- * - Otherwise, uses serial FFTW
+ * Two strategies, chosen at configure time.
+ *
+ * 1. Batch-parallel (PARAFAFT_BATCH_PARALLEL, the default). Every stage is a
+ *    batch of independent 1D transforms, so the batch is split across threads
+ *    and each chunk runs a *serial* FFTW plan. FFTW's own threading is pinned
+ *    to one thread to avoid nesting. The executor is OpenMP or a std::thread
+ *    pool (see ../parallel_for.hpp). Buffers are first-touched with the same
+ *    block partition so pages land in the touching thread's NUMA domain.
+ *
+ * 2. FFTW-internal threading (PARAFAFT_BATCH_PARALLEL=OFF). One plan per stage
+ *    with fftw_plan_with_nthreads(N), parallelising *within* each transform:
+ *    - PARAFAFT_FFTW_THREADS uses libfftw3_threads (POSIX threads)
+ *    - PARAFAFT_FFTW_OMP uses fftw3_omp (OpenMP)
+ *
+ * Both are expressed as the same chunked-plan structure — strategy 2 is simply
+ * the single-chunk case — so there is one execution path to maintain.
  */
 
 #ifndef PARAFAFT_BACKEND_FFTW_HPP
 #define PARAFAFT_BACKEND_FFTW_HPP
 
 #include <fftw3.h>
+#include <algorithm>
 #include <complex>
 #include <cstddef>
 #include <cstring>
+#include <memory>
 #include <new>
 #include <vector>
 #include <thread>
 #include <cstdlib>
 #include <mpi.h>
 #include "../fft_backend.hpp"
+#include "../parallel_for.hpp"
 
 namespace parafaft
 {
@@ -254,6 +270,15 @@ namespace parafaft
     using Buffer = AlignedBuffer;               ///< Real buffer type (FFTW-aligned)
     using ComplexBuffer = AlignedComplexBuffer;  ///< Complex buffer type (FFTW-aligned)
 
+    /// Which executor the batch-parallel path was compiled against.
+#if defined(PARAFAFT_PARALLEL_OMP)
+    static constexpr FFTBackendType kExecutorBackendType = FFTBackendType::OpenMP;
+#elif defined(PARAFAFT_PARALLEL_THREADS)
+    static constexpr FFTBackendType kExecutorBackendType = FFTBackendType::Threads;
+#else
+    static constexpr FFTBackendType kExecutorBackendType = FFTBackendType::Serial;
+#endif
+
     /**
      * @brief Construct an FFTW backend with storage for the given number of stages.
      *
@@ -261,20 +286,8 @@ namespace parafaft
      * @param plan_flag Planning strategy (default: Estimate for quick planning)
      */
     explicit FFTWBackend(int num_stages, FFTPlanFlag plan_flag = FFTPlanFlag::Estimate)
-        : forward_plans_(num_stages, nullptr), backward_plans_(num_stages, nullptr), backend_type_(FFTBackendType::Serial),
-          num_threads_(1), plan_flag_(convertPlanFlag(plan_flag))
+        : FFTWBackend(num_stages, MPI_COMM_SELF, plan_flag)
     {
-#if defined(PARAFAFT_FFTW_THREADS)
-      backend_type_ = FFTBackendType::Threads;
-      traits::init_threads();
-      num_threads_ = detect_thread_count(MPI_COMM_SELF);
-      traits::plan_with_nthreads(num_threads_);
-#elif defined(PARAFAFT_FFTW_OMP)
-      backend_type_ = FFTBackendType::OpenMP;
-      traits::init_threads();
-      num_threads_ = detect_thread_count(MPI_COMM_SELF);
-      traits::plan_with_nthreads(num_threads_);
-#endif
     }
 
     /**
@@ -285,22 +298,76 @@ namespace parafaft
      * @param plan_flag Planning strategy (default: Estimate for quick planning)
      */
     explicit FFTWBackend(int num_stages, MPI_Comm comm, FFTPlanFlag plan_flag = FFTPlanFlag::Estimate)
-        : forward_plans_(num_stages, nullptr), backward_plans_(num_stages, nullptr), backend_type_(FFTBackendType::Serial),
-          num_threads_(1), plan_flag_(convertPlanFlag(plan_flag))
+        : forward_plans_(num_stages), backward_plans_(num_stages), backend_type_(FFTBackendType::Serial),
+          num_threads_(detect_thread_count(comm)), plan_flag_(convertPlanFlag(plan_flag))
     {
+#if defined(PARAFAFT_BATCH_PARALLEL)
+      // We parallelise across the batch ourselves, so FFTW must stay serial —
+      // otherwise each of our threads would spawn its own FFTW thread team.
+      backend_type_ = kExecutorBackendType;
+#if defined(PARAFAFT_FFTW_THREADS) || defined(PARAFAFT_FFTW_OMP)
+      traits::init_threads();
+      traits::plan_with_nthreads(1);
+#endif
+      executor_.reset(new detail::ParallelExecutor(num_threads_));
+#else
+      // FFTW does the threading internally; a single chunk per stage.
 #if defined(PARAFAFT_FFTW_THREADS)
       backend_type_ = FFTBackendType::Threads;
       traits::init_threads();
-      num_threads_ = detect_thread_count(comm);
       traits::plan_with_nthreads(num_threads_);
 #elif defined(PARAFAFT_FFTW_OMP)
       backend_type_ = FFTBackendType::OpenMP;
       traits::init_threads();
-      num_threads_ = detect_thread_count(comm);
       traits::plan_with_nthreads(num_threads_);
 #else
-      (void)comm; // Suppress unused parameter warning
+      num_threads_ = 1;
 #endif
+      executor_.reset(new detail::ParallelExecutor(1));
+#endif
+    }
+
+    /// @brief Threads this backend dispatches FFT chunks to (1 when FFTW threads internally).
+    int num_chunks() const { return executor_ ? executor_->size() : 1; }
+
+    /// @brief Threads requested per rank, from OMP_NUM_THREADS or the node topology.
+    int num_threads() const { return num_threads_; }
+
+    /// @brief Which threading strategy was compiled in.
+    FFTBackendType backend_type() const { return backend_type_; }
+
+    /**
+     * @brief Pre-fault a buffer from every worker thread (NUMA first touch).
+     *
+     * Linux binds a page to the NUMA domain of the thread that first writes it.
+     * Allocation alone does not fault pages in, so without this the whole
+     * working set is owned by whichever thread initialised it and every worker
+     * pulls from that one memory controller.
+     *
+     * The buffer is split into page-aligned blocks using the same block
+     * partition as the FFT chunks. This matches the access pattern for stages
+     * whose transforms are contiguous (dist-major); for the strided first-axis
+     * stage a thread's chunk is interleaved across the buffer, so this is a
+     * distribution heuristic rather than an exact match.
+     *
+     * @param data  Buffer start. Ignored when null.
+     * @param bytes Buffer length in bytes.
+     */
+    void first_touch(void *data, std::size_t bytes)
+    {
+      if (data == nullptr || bytes == 0) return;
+
+      constexpr std::size_t kPageSize = 4096;
+      char *base = static_cast<char *>(data);
+      const std::size_t num_pages = (bytes + kPageSize - 1) / kPageSize;
+
+      executor_->run([base, bytes, num_pages](int tid, int nthreads) {
+        std::size_t first_page = 0, last_page = 0;
+        detail::chunk_range(num_pages, tid, nthreads, first_page, last_page);
+        const std::size_t begin = first_page * kPageSize;
+        const std::size_t end = std::min(last_page * kPageSize, bytes);
+        if (begin < end) std::memset(base + begin, 0, end - begin);
+      });
     }
 
     /**
@@ -320,20 +387,40 @@ namespace parafaft
     void create_stage_plan(int stage, int length, std::size_t batch, Complex *data,
                            std::ptrdiff_t stride, std::ptrdiff_t dist)
     {
-      fftw_complex_t *fftw_data = reinterpret_cast<fftw_complex_t *>(data);
       // Batched 1D transform: dims describe the transform axis (length N,
       // in-stride == out-stride == stride); howmany_dims describe the batch
-      // (howmany = batch, dist between batches for in/out).
+      // (howmany = chunk size, dist between batches for in/out).
       // Using guru64 so strides/batch are ptrdiff_t — avoids the int-overflow
       // trap in plan_many_dft when batch*dist exceeds 2^31.
-      typename traits::iodim64_t dims[] = {{static_cast<std::ptrdiff_t>(length), stride, stride}};
-      typename traits::iodim64_t howmany_dims[] = {
-          {static_cast<std::ptrdiff_t>(batch), dist, dist}};
+      //
+      // One plan per chunk, each planned at the exact offset its thread will
+      // execute on. Planning at the offset (rather than at `data` with a
+      // shifted execute) is what keeps the new-array execute legal: FFTW
+      // records the planning pointer's alignment and requires the runtime
+      // pointer to match, and equal offsets into equally-aligned fftw_alloc'd
+      // buffers do match.
+      forward_plans_[stage] = ChunkedPlan(num_chunks());
+      backward_plans_[stage] = ChunkedPlan(num_chunks());
 
-      forward_plans_[stage] = traits::plan_guru64_dft(1, dims, 1, howmany_dims, fftw_data, fftw_data,
-                                                      FFTW_FORWARD, plan_flag_);
-      backward_plans_[stage] = traits::plan_guru64_dft(1, dims, 1, howmany_dims, fftw_data, fftw_data,
-                                                       FFTW_BACKWARD, plan_flag_);
+      for (int chunk = 0; chunk < num_chunks(); ++chunk) {
+        std::size_t begin = 0, end = 0;
+        detail::chunk_range(batch, chunk, num_chunks(), begin, end);
+        if (begin == end) continue; // more threads than transforms
+
+        const std::ptrdiff_t offset = static_cast<std::ptrdiff_t>(begin) * dist;
+        fftw_complex_t *chunk_data = reinterpret_cast<fftw_complex_t *>(data + offset);
+
+        typename traits::iodim64_t dims[] = {{static_cast<std::ptrdiff_t>(length), stride, stride}};
+        typename traits::iodim64_t howmany_dims[] = {
+            {static_cast<std::ptrdiff_t>(end - begin), dist, dist}};
+
+        forward_plans_[stage].offsets[chunk] = offset;
+        backward_plans_[stage].offsets[chunk] = offset;
+        forward_plans_[stage].plans[chunk] = traits::plan_guru64_dft(
+            1, dims, 1, howmany_dims, chunk_data, chunk_data, FFTW_FORWARD, plan_flag_);
+        backward_plans_[stage].plans[chunk] = traits::plan_guru64_dft(
+            1, dims, 1, howmany_dims, chunk_data, chunk_data, FFTW_BACKWARD, plan_flag_);
+      }
     }
 
     /**
@@ -356,15 +443,29 @@ namespace parafaft
                                  std::ptrdiff_t dist        // Distance between batches (padded: 2*(N/2+1) scalars)
     )
     {
-      fftw_complex_t *fftw_data = reinterpret_cast<fftw_complex_t *>(padded_real);
       // For R2C: output dist is dist/2 (complex elements vs scalar elements).
       // Using guru64 so batch*dist isn't truncated to int inside FFTW.
-      typename traits::iodim64_t dims[] = {{static_cast<std::ptrdiff_t>(length), stride, stride}};
-      typename traits::iodim64_t howmany_dims[] = {
-          {static_cast<std::ptrdiff_t>(batch), dist, dist / 2}};
+      // Offsets are in FloatType units; the complex view starts at the same
+      // byte address, so one offset serves both.
+      r2c_inplace_plan_ = ChunkedPlan(num_chunks());
 
-      r2c_inplace_plan_ = traits::plan_guru64_dft_r2c(1, dims, 1, howmany_dims, padded_real,
-                                                      fftw_data, plan_flag_);
+      for (int chunk = 0; chunk < num_chunks(); ++chunk) {
+        std::size_t begin = 0, end = 0;
+        detail::chunk_range(batch, chunk, num_chunks(), begin, end);
+        if (begin == end) continue;
+
+        const std::ptrdiff_t offset = static_cast<std::ptrdiff_t>(begin) * dist;
+        FloatType *chunk_real = padded_real + offset;
+
+        typename traits::iodim64_t dims[] = {{static_cast<std::ptrdiff_t>(length), stride, stride}};
+        typename traits::iodim64_t howmany_dims[] = {
+            {static_cast<std::ptrdiff_t>(end - begin), dist, dist / 2}};
+
+        r2c_inplace_plan_.offsets[chunk] = offset;
+        r2c_inplace_plan_.plans[chunk] = traits::plan_guru64_dft_r2c(
+            1, dims, 1, howmany_dims, chunk_real,
+            reinterpret_cast<fftw_complex_t *>(chunk_real), plan_flag_);
+      }
     }
 
     /**
@@ -377,7 +478,13 @@ namespace parafaft
      */
     void execute_r2c_inplace(FloatType *padded_real)
     {
-      traits::execute_dft_r2c(r2c_inplace_plan_, padded_real, reinterpret_cast<fftw_complex_t *>(padded_real));
+      const ChunkedPlan &plan = r2c_inplace_plan_;
+      executor_->run([&plan, padded_real](int chunk, int) {
+        if (plan.plans[chunk] == nullptr) return;
+        FloatType *chunk_real = padded_real + plan.offsets[chunk];
+        traits::execute_dft_r2c(plan.plans[chunk], chunk_real,
+                                reinterpret_cast<fftw_complex_t *>(chunk_real));
+      });
     }
 
     /**
@@ -400,14 +507,26 @@ namespace parafaft
                                  std::ptrdiff_t dist        // Distance between batches (padded: 2*(N/2+1))
     )
     {
-      fftw_complex_t *fftw_data = reinterpret_cast<fftw_complex_t *>(padded_real);
       // For C2R: input dist is dist/2 (complex elements), output dist is dist (scalars).
-      typename traits::iodim64_t dims[] = {{static_cast<std::ptrdiff_t>(length), stride, stride}};
-      typename traits::iodim64_t howmany_dims[] = {
-          {static_cast<std::ptrdiff_t>(batch), dist / 2, dist}};
+      c2r_inplace_plan_ = ChunkedPlan(num_chunks());
 
-      c2r_inplace_plan_ = traits::plan_guru64_dft_c2r(1, dims, 1, howmany_dims, fftw_data,
-                                                      padded_real, plan_flag_);
+      for (int chunk = 0; chunk < num_chunks(); ++chunk) {
+        std::size_t begin = 0, end = 0;
+        detail::chunk_range(batch, chunk, num_chunks(), begin, end);
+        if (begin == end) continue;
+
+        const std::ptrdiff_t offset = static_cast<std::ptrdiff_t>(begin) * dist;
+        FloatType *chunk_real = padded_real + offset;
+
+        typename traits::iodim64_t dims[] = {{static_cast<std::ptrdiff_t>(length), stride, stride}};
+        typename traits::iodim64_t howmany_dims[] = {
+            {static_cast<std::ptrdiff_t>(end - begin), dist / 2, dist}};
+
+        c2r_inplace_plan_.offsets[chunk] = offset;
+        c2r_inplace_plan_.plans[chunk] = traits::plan_guru64_dft_c2r(
+            1, dims, 1, howmany_dims, reinterpret_cast<fftw_complex_t *>(chunk_real),
+            chunk_real, plan_flag_);
+      }
     }
 
     /**
@@ -420,7 +539,13 @@ namespace parafaft
      */
     void execute_c2r_inplace(FloatType *padded_real)
     {
-      traits::execute_dft_c2r(c2r_inplace_plan_, reinterpret_cast<fftw_complex_t *>(padded_real), padded_real);
+      const ChunkedPlan &plan = c2r_inplace_plan_;
+      executor_->run([&plan, padded_real](int chunk, int) {
+        if (plan.plans[chunk] == nullptr) return;
+        FloatType *chunk_real = padded_real + plan.offsets[chunk];
+        traits::execute_dft_c2r(plan.plans[chunk],
+                                reinterpret_cast<fftw_complex_t *>(chunk_real), chunk_real);
+      });
     }
 
     /**
@@ -436,9 +561,14 @@ namespace parafaft
      */
     void execute_stage(int stage, FFTDirection direction, Complex *data)
     {
-      fftw_plan_t plan = (direction == FFTDirection::Forward) ? forward_plans_[stage] : backward_plans_[stage];
-      fftw_complex_t *fftw_data = reinterpret_cast<fftw_complex_t *>(data);
-      traits::execute_dft(plan, fftw_data, fftw_data);
+      const ChunkedPlan &plan =
+          (direction == FFTDirection::Forward) ? forward_plans_[stage] : backward_plans_[stage];
+      executor_->run([&plan, data](int chunk, int) {
+        if (plan.plans[chunk] == nullptr) return;
+        fftw_complex_t *chunk_data =
+            reinterpret_cast<fftw_complex_t *>(data + plan.offsets[chunk]);
+        traits::execute_dft(plan.plans[chunk], chunk_data, chunk_data);
+      });
     }
 
     /**
@@ -482,14 +612,10 @@ namespace parafaft
      */
     ~FFTWBackend()
     {
-      for (auto plan : forward_plans_) {
-        if (plan) traits::destroy_plan(plan);
-      }
-      for (auto plan : backward_plans_) {
-        if (plan) traits::destroy_plan(plan);
-      }
-      if (r2c_inplace_plan_) traits::destroy_plan(r2c_inplace_plan_);
-      if (c2r_inplace_plan_) traits::destroy_plan(c2r_inplace_plan_);
+      for (ChunkedPlan &stage : forward_plans_) stage.destroy();
+      for (ChunkedPlan &stage : backward_plans_) stage.destroy();
+      r2c_inplace_plan_.destroy();
+      c2r_inplace_plan_.destroy();
 
 #if defined(PARAFAFT_FFTW_THREADS) || defined(PARAFAFT_FFTW_OMP)
       traits::cleanup_threads();
@@ -510,14 +636,19 @@ namespace parafaft
      * @param other Backend to move from
      */
     FFTWBackend(FFTWBackend &&other) noexcept
-        : forward_plans_(std::move(other.forward_plans_)), backward_plans_(std::move(other.backward_plans_)),
-          r2c_inplace_plan_(other.r2c_inplace_plan_), c2r_inplace_plan_(other.c2r_inplace_plan_),
-          plan_flag_(other.plan_flag_)
+        : forward_plans_(std::move(other.forward_plans_)),
+          backward_plans_(std::move(other.backward_plans_)),
+          r2c_inplace_plan_(std::move(other.r2c_inplace_plan_)),
+          c2r_inplace_plan_(std::move(other.c2r_inplace_plan_)),
+          executor_(std::move(other.executor_)), backend_type_(other.backend_type_),
+          num_threads_(other.num_threads_), plan_flag_(other.plan_flag_)
     {
-      std::fill(other.forward_plans_.begin(), other.forward_plans_.end(), nullptr);
-      std::fill(other.backward_plans_.begin(), other.backward_plans_.end(), nullptr);
-      other.r2c_inplace_plan_ = nullptr;
-      other.c2r_inplace_plan_ = nullptr;
+      // Moved-from vectors are already empty; clear the in-place plans so the
+      // source destructor cannot double-destroy them.
+      other.forward_plans_.clear();
+      other.backward_plans_.clear();
+      other.r2c_inplace_plan_ = ChunkedPlan();
+      other.c2r_inplace_plan_ = ChunkedPlan();
     }
 
     // ========== FFTW Wisdom Support ==========
@@ -563,10 +694,41 @@ namespace parafaft
     }
 
   private:
-    std::vector<fftw_plan_t> forward_plans_;  ///< Forward C2C plans (one per stage)
-    std::vector<fftw_plan_t> backward_plans_; ///< Backward C2C plans (one per stage)
-    fftw_plan_t r2c_inplace_plan_ = nullptr;  ///< In-place R2C plan
-    fftw_plan_t c2r_inplace_plan_ = nullptr;  ///< In-place C2R plan
+    /**
+     * @brief One stage's plans, split across the executor's threads.
+     *
+     * `plans[i]` transforms the sub-batch starting at `offsets[i]` elements
+     * into the data buffer (FloatType units for the R2C/C2R plans, Complex
+     * units for C2C). A null entry means that thread has no work, which
+     * happens when there are more threads than transforms in the batch.
+     *
+     * With batch-parallelism disabled there is exactly one chunk at offset 0,
+     * reproducing the single-plan behaviour.
+     */
+    struct ChunkedPlan {
+      std::vector<fftw_plan_t> plans;
+      std::vector<std::ptrdiff_t> offsets;
+
+      ChunkedPlan() = default;
+      explicit ChunkedPlan(int num_chunks) : plans(num_chunks, nullptr), offsets(num_chunks, 0) {}
+
+      void destroy()
+      {
+        for (fftw_plan_t plan : plans) {
+          if (plan) traits::destroy_plan(plan);
+        }
+        plans.clear();
+        offsets.clear();
+      }
+    };
+
+    std::vector<ChunkedPlan> forward_plans_;  ///< Forward C2C plans (one entry per stage)
+    std::vector<ChunkedPlan> backward_plans_; ///< Backward C2C plans (one entry per stage)
+    ChunkedPlan r2c_inplace_plan_;            ///< In-place R2C plans
+    ChunkedPlan c2r_inplace_plan_;            ///< In-place C2R plans
+
+    /// Dispatches FFT chunks; held by pointer so the backend stays movable.
+    std::unique_ptr<detail::ParallelExecutor> executor_;
 
     FFTBackendType backend_type_; ///< Threading backend type
     int num_threads_;              ///< Number of threads for FFTW
@@ -595,19 +757,20 @@ namespace parafaft
      * @brief Detect optimal thread count based on environment and hardware.
      *
      * Priority:
-     * 1. OMP_NUM_THREADS environment variable (if using OpenMP backend)
+     * 1. OMP_NUM_THREADS environment variable
      * 2. KOKKOS_NUM_THREADS environment variable
-     * 3. std::thread::hardware_concurrency() / mpi_task_count
+     * 3. std::thread::hardware_concurrency() / ranks sharing this node
      * 4. Default to 1 (serial)
      *
      * @param comm MPI communicator for determining task count
      * @return Optimal number of threads
      */
-    int detect_thread_count(MPI_Comm comm)
+    static int detect_thread_count(MPI_Comm comm)
     {
       int threads = 1;
 
-#if defined(PARAFAFT_FFTW_OMP)
+      // Honour OMP_NUM_THREADS whichever threading library is linked: it is the
+      // user's explicit "threads per rank" request, not an OpenMP-only setting.
       const char *omp_threads = std::getenv("OMP_NUM_THREADS");
       if (omp_threads != nullptr) {
         threads = std::atoi(omp_threads);
@@ -615,7 +778,6 @@ namespace parafaft
           return threads;
         }
       }
-#endif
 
       const char *kokkos_threads = std::getenv("KOKKOS_NUM_THREADS");
       if (kokkos_threads != nullptr) {
@@ -627,9 +789,16 @@ namespace parafaft
 
       unsigned int hw_threads = std::thread::hardware_concurrency();
       if (hw_threads > 0) {
-        int mpi_size = 1;
-        MPI_Comm_size(comm, &mpi_size);
-        threads = static_cast<int>(hw_threads) / mpi_size;
+        // Divide the node's cores among the ranks *sharing that node*. Dividing by
+        // the size of comm would shrink the thread count as the job scales out
+        // across nodes, silently leaving most of each node idle.
+        int local_size = 1;
+        MPI_Comm shared_comm;
+        MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, &shared_comm);
+        MPI_Comm_size(shared_comm, &local_size);
+        MPI_Comm_free(&shared_comm);
+
+        threads = static_cast<int>(hw_threads) / local_size;
         if (threads < 1) {
           threads = 1;
         }

@@ -506,6 +506,14 @@ public:
     check_hip(hipStreamSynchronize(stream_), "hipStreamSynchronize");
   }
 
+  /**
+   * @brief No-op: device allocations have no host NUMA first-touch semantics.
+   *
+   * Present so ParaFaFT can call it unconditionally; see the FFTW backend for
+   * the CPU implementation.
+   */
+  void first_touch(void * /*data*/, std::size_t /*bytes*/) const {}
+
   // ========== P2P / IPC Methods ==========
 
   static constexpr bool use_p2p = true;
