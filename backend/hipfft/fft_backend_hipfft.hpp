@@ -536,6 +536,21 @@ public:
       check_hip(err, "hipDeviceEnablePeerAccess");
   }
 
+  /**
+   * @brief Whether a peer link is a top-tier interconnect.
+   *
+   * Governs whether P2P reads are serialized into direction-separated phases
+   * to avoid bidirectional contention on a shared PCIe switch. Reports false
+   * for distinct devices, keeping the conservative phased schedule: this
+   * backend is untested on the AMD interconnects where it would matter, and
+   * an over-cautious schedule costs bandwidth while an under-cautious one
+   * costs correctness of the performance assumption. Same device needs no
+   * phasing.
+   */
+  static bool peer_link_is_top_tier(int src_dev, int dst_dev) {
+    return src_dev == dst_dev;
+  }
+
   static constexpr size_t ipc_handle_size = sizeof(hipIpcMemHandle_t);
 
   static void ipc_get_handle(void *devptr, void *handle) {

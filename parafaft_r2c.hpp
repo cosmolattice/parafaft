@@ -187,21 +187,23 @@ public:
     } else {
       // Standard ParaFaFT: manual pencil decomposition + MPI exchange
 
-      // Create (D-1)-dimensional Cartesian processor grid
+      // Create (D-1)-dimensional Cartesian processor grid, aligning the
+      // rank-contiguous dimension with node boundaries where possible.
       int dims[D - 1];
-      for (int i = 0; i < D - 1; ++i)
-        dims[i] = 0;
-      MPI_Dims_create(size_, D - 1, dims);
+      choose_dims(size_, D - 1, detect_ranks_per_node(comm_world_), dims);
 
       for (int i = 0; i < D - 1; ++i) {
         dims_[i] = dims[i];
       }
 
-      // Create Cartesian communicator (non-periodic)
+      // Create Cartesian communicator (non-periodic). reorder=0: the grid is
+      // already chosen for this machine's topology, and renumbering would
+      // invalidate it. It would also break the MPI_Cart_coords call below,
+      // which looks up a comm_world_ rank in comm_cart_.
       int periods[D - 1];
       for (int i = 0; i < D - 1; ++i)
         periods[i] = 0;
-      MPI_Cart_create(comm_world_, D - 1, dims, periods, 1, &comm_cart_);
+      MPI_Cart_create(comm_world_, D - 1, dims, periods, 0, &comm_cart_);
 
       // Get this processor's coordinates in the grid
       MPI_Cart_coords(comm_cart_, rank_, D - 1, coords_);
@@ -407,7 +409,8 @@ public:
         exchange_hybrid<Backend>(
             backend_, subcomms_[axis], nparts_[trans], src, dst,
             pack_buffer_.data(), p2p_info_[trans].remote_pack_ptrs.data(),
-            p2p_info_[trans].peer_enabled.data(), fwd_exchange_geom_[trans]);
+            p2p_info_[trans].peer_enabled.data(),
+            p2p_info_[trans].needs_phased, fwd_exchange_geom_[trans]);
       } else {
         exchange_packed<Backend>(backend_, subcomms_[axis], nparts_[trans], src,
                                  dst, pack_buffer_.data(),
@@ -520,7 +523,8 @@ public:
         exchange_hybrid<Backend>(
             backend_, subcomms_[axis], nparts_[trans], src, dst,
             pack_buffer_.data(), p2p_info_[trans].remote_pack_ptrs.data(),
-            p2p_info_[trans].peer_enabled.data(), bwd_exchange_geom_[trans]);
+            p2p_info_[trans].peer_enabled.data(),
+            p2p_info_[trans].needs_phased, bwd_exchange_geom_[trans]);
       } else {
         exchange_packed<Backend>(backend_, subcomms_[axis], nparts_[trans], src,
                                  dst, pack_buffer_.data(),
@@ -913,10 +917,21 @@ private:
 
   /**
    * @brief Set up CUDA/HIP IPC for P2P GPU-to-GPU exchange.
+   *
+   * Setting PARAFAFT_GPU_DISABLE_P2P leaves every transition without P2P, so
+   * all redistribution falls back to the MPI path in exchange_packed. That is
+   * both an escape hatch when IPC misbehaves and the only way to exercise the
+   * packed path on a machine where every rank shares one GPU.
    */
   void setup_p2p() {
     if constexpr (Backend::use_p2p) {
       p2p_info_.resize(D - 1);
+
+      const char *disable_p2p = std::getenv("PARAFAFT_GPU_DISABLE_P2P");
+      if (disable_p2p != nullptr && disable_p2p[0] != '\0' &&
+          disable_p2p[0] != '0')
+        return;
+
       int my_device = Backend::device_id();
 
       for (int t = 0; t < D - 1; ++t) {
@@ -958,7 +973,13 @@ private:
           }
         }
 
-        // Check if any remote neighbour supports P2P
+        // Check if any remote neighbour supports P2P. The answer must be
+        // agreed across the subcommunicator, because everything below this
+        // point is collective: a rank that bailed out here while its peers
+        // continued would hang them on the IPC handle Allgather. That happens
+        // whenever a node contributes exactly one rank to this subcomm — that
+        // rank alone sees no same-node peer. Ranks in the minority still take
+        // part and simply fall back to MPI for every neighbour.
         bool any_p2p = false;
         for (int p = 0; p < nparts; ++p) {
           if (p != my_subrank && p2p_info_[t].peer_enabled[p]) {
@@ -966,7 +987,9 @@ private:
             break;
           }
         }
-        if (!any_p2p)
+        int any_p2p_flag = any_p2p ? 1 : 0;
+        MPI_Allreduce(MPI_IN_PLACE, &any_p2p_flag, 1, MPI_INT, MPI_LOR, comm);
+        if (!any_p2p_flag)
           continue;
 
         // Enable peer access only for capable neighbours
@@ -974,6 +997,26 @@ private:
           if (p2p_info_[t].peer_enabled[p] && devices[p] != my_device)
             Backend::enable_peer_access(devices[p]);
         }
+
+        // Decide whether the P2P read schedule has to be phased. Phasing only
+        // buys anything on a shared PCIe switch, so it is dropped when every
+        // enabled peer sits on a top-tier link. The vote must be unanimous:
+        // the mid-schedule barrier is collective, so a rank running unphased
+        // while its peers run phased would deadlock.
+        bool local_needs_phased = false;
+        for (int p = 0; p < nparts; ++p) {
+          if (p == my_subrank || !p2p_info_[t].peer_enabled[p])
+            continue;
+          if (!Backend::peer_link_is_top_tier(my_device, devices[p]))
+            local_needs_phased = true;
+        }
+        const char *force_phased = std::getenv("PARAFAFT_GPU_FORCE_PHASED_P2P");
+        if (force_phased != nullptr && force_phased[0] != '\0' &&
+            force_phased[0] != '0')
+          local_needs_phased = true;
+        int phased_flag = local_needs_phased ? 1 : 0;
+        MPI_Allreduce(MPI_IN_PLACE, &phased_flag, 1, MPI_INT, MPI_LOR, comm);
+        p2p_info_[t].needs_phased = (phased_flag != 0);
 
         // Exchange IPC handles for pack_buffer_ (collective — all must call)
         using Handle = std::array<char, Backend::ipc_handle_size>;
@@ -1230,6 +1273,11 @@ private:
   /// Per-subcommunicator P2P exchange info (GPU backends only)
   struct P2PInfo {
     bool any_enabled = false;       ///< True if at least one neighbour uses P2P
+    /// True when P2P reads must run as two direction-separated phases to
+    /// avoid bidirectional PCIe-switch contention. False on a full-duplex
+    /// fabric (NVLink), where phasing only costs bandwidth. Agreed across the
+    /// subcommunicator: a split decision would deadlock on the phase barrier.
+    bool needs_phased = true;
     std::vector<char> peer_enabled; ///< Per-neighbour: true = P2P, false = MPI
     std::vector<void *> remote_pack_ptrs;
   };

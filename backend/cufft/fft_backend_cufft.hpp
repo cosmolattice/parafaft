@@ -538,6 +538,33 @@ public:
       check_cuda(err, "cudaDeviceEnablePeerAccess");
   }
 
+  /**
+   * @brief Whether a peer link is a top-tier interconnect (e.g. NVLink).
+   *
+   * Decides whether P2P reads must be serialized into direction-separated
+   * phases. That serialization exists only to dodge the throughput collapse
+   * seen when two GPUs read from each other simultaneously across a shared
+   * PCIe switch; a full-duplex NVLink/NVSwitch fabric has no such pathology,
+   * so phasing there merely halves the achievable bandwidth.
+   *
+   * cudaDevP2PAttrPerformanceRank ranks links relatively, 0 being the best
+   * path available between these devices. Anything worse is treated as
+   * possibly PCIe-routed and kept on the conservative phased schedule. The
+   * same device (the oversubscribed single-GPU case) needs no phasing either.
+   * On query failure, report false so the caller keeps the safe behaviour.
+   */
+  static bool peer_link_is_top_tier(int src_dev, int dst_dev) {
+    if (src_dev == dst_dev)
+      return true;
+    int perf_rank = 0;
+    if (cudaDeviceGetP2PAttribute(&perf_rank, cudaDevP2PAttrPerformanceRank,
+                                  src_dev, dst_dev) != cudaSuccess) {
+      cudaGetLastError(); // clear sticky error; absence of data is not fatal
+      return false;
+    }
+    return perf_rank == 0;
+  }
+
   static constexpr size_t ipc_handle_size = sizeof(cudaIpcMemHandle_t);
 
   static void ipc_get_handle(void *devptr, void *handle) {
