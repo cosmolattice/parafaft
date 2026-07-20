@@ -142,7 +142,22 @@ public:
     }
 
     if constexpr (Backend::handles_distributed) {
-      // Backend handles MPI decomposition, communication, and FFT internally
+      // Backend handles MPI decomposition, communication, and FFT internally.
+      // It still owns a topology, and callers query it through the same
+      // accessors as the manual path, so publish it here. cuFFTMp distributes
+      // along the first axis in rank order on comm_world_, i.e. a slab, so the
+      // grid is [size_, 1, ...] and this rank sits at [rank_, 0, ...].
+      // comm_cart_ stays MPI_COMM_NULL: the backend builds no Cartesian
+      // communicator, and comm_world_ carries the authoritative rank order.
+      // Without this these members would be read uninitialized by
+      // get_domain_decomposition() / get_grid_coords().
+      comm_cart_ = MPI_COMM_NULL;
+      for (int i = 0; i < D - 1; ++i) {
+        dims_[i] = (i == 0) ? size_ : 1;
+        coords_[i] = (i == 0) ? rank_ : 0;
+        subcomms_[i] = MPI_COMM_NULL;
+      }
+
       backend_.setup_distributed(global_shape, comm);
       auto info = backend_.get_distributed_info();
       // Store shapes for public API queries. get_required_output_size() loops
@@ -227,6 +242,14 @@ public:
       // Allocate pack buffer for manual packing exchange (GPU backends)
       if constexpr (!Backend::use_alltoallw) {
         pack_buffer_.resize(max_complex_size);
+      }
+
+      // Fault the pages in from every worker thread so they are distributed
+      // across NUMA domains. Must precede plan creation: FFTW_MEASURE writes to
+      // the planning buffer, which would otherwise first-touch it single-threaded.
+      backend_.first_touch(scratch_b_.data(), scratch_b_.size() * sizeof(Complex));
+      if constexpr (!Backend::use_alltoallw) {
+        backend_.first_touch(pack_buffer_.data(), pack_buffer_.size() * sizeof(Complex));
       }
 
       // Create FFT plans
@@ -690,6 +713,49 @@ public:
   }
 
   /**
+   * @brief Number of dimensions in the processor grid.
+   *
+   * Always D-1: the last axis is never distributed. Exposed so callers can
+   * reason about the grid without hardcoding the offset between grid
+   * dimensions and array axes.
+   */
+  static constexpr int get_grid_ndims() { return D - 1; }
+
+  /**
+   * @brief Get this rank's coordinates in the processor grid.
+   *
+   * These are the coordinates that real_global_start_ and
+   * complex_global_start_ are derived from, so a consumer building its own
+   * topology must reproduce them exactly or its notion of which subdomain
+   * this rank owns will disagree with ours.
+   *
+   * @param[out] coords Array of D-1 integers to receive the coordinates.
+   */
+  void get_grid_coords(int coords[D - 1]) const {
+    for (int i = 0; i < D - 1; ++i) {
+      coords[i] = coords_[i];
+    }
+  }
+
+  /**
+   * @brief Duplicate of the communicator whose rank order defines the grid.
+   *
+   * Returns a fresh communicator that THE CALLER OWNS and must release with
+   * MPI_Comm_free. It is a duplicate rather than a borrowed handle because
+   * our destructor frees comm_cart_, and callers typically query a
+   * short-lived probe object.
+   *
+   * Falls back to comm_world_ when no Cartesian communicator was built (the
+   * handles_distributed backends), since there the rank order on comm_world_
+   * is what determines the decomposition.
+   */
+  MPI_Comm dup_cartesian_comm() const {
+    MPI_Comm out;
+    MPI_Comm_dup(comm_cart_ != MPI_COMM_NULL ? comm_cart_ : comm_world_, &out);
+    return out;
+  }
+
+  /**
    * @brief Get the backend-managed buffer for distributed transforms.
    *
    * When the backend handles distributed transforms (e.g., cuFFTMp), the
@@ -836,6 +902,11 @@ private:
         init_exchange_geometry(bwd_exchange_geom_[t], nparts_[t], D,
                                stage_shapes_[t + 1].data(), recv_axis,
                                stage_output_shapes_[t].data(), send_axis);
+        // Exchange per-peer send displacements for the P2P/IPC read path.
+        // Same subcomm the fwd/bwd exchange of transition t runs over.
+        MPI_Comm geom_comm = subcomms_[D - 2 - t];
+        init_remote_send_displs(fwd_exchange_geom_[t], geom_comm);
+        init_remote_send_displs(bwd_exchange_geom_[t], geom_comm);
       }
     }
   }

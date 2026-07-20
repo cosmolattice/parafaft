@@ -173,6 +173,13 @@ struct ExchangeGeometry {
   std::vector<int> send_displs;  ///< Per-peer send element displacements
   std::vector<int> recv_counts;  ///< Per-peer recv element counts
   std::vector<int> recv_displs;  ///< Per-peer recv element displacements
+  /// Per-peer offset of *our* block inside peer p's send/pack buffer, i.e.
+  /// peer p's send_displs[myrank]. Needed by the P2P/IPC path, which reads
+  /// directly out of a peer's pack buffer: send_displs is rank-dependent
+  /// whenever a trailing axis is split unevenly (differing src_trailing), so
+  /// the local send_displs[myrank] would index the peer's buffer wrongly.
+  /// Populated by init_remote_send_displs() (collective). Empty otherwise.
+  std::vector<int> remote_send_displs;
   std::vector<int> src_n;        ///< Per-peer: decompose n for src axis
   std::vector<int> src_s;        ///< Per-peer: decompose s (start) for src axis
   std::vector<int> dst_n;        ///< Per-peer: decompose n for dst axis
@@ -250,6 +257,29 @@ inline void init_exchange_geometry(
   }
 
   geom.requests.reserve(2 * (nparts > 0 ? nparts - 1 : 0));
+}
+
+/**
+ * @brief Exchange per-peer send displacements so each rank learns, for every
+ * peer p, the offset of its own block inside peer p's pack buffer.
+ *
+ * The P2P/IPC exchange reads a peer's pack buffer directly and therefore needs
+ * that peer's layout, not the local one. An MPI_Alltoall of send_displs yields
+ * exactly remote_send_displs[p] = (peer p's send_displs)[myrank], because
+ * MPI_Alltoall delivers into slot p whatever peer p placed in slot myrank.
+ *
+ * Collective over @p comm; must be called by all ranks in the subcommunicator.
+ * A no-op for the packed/alltoallw paths, which never read remote buffers.
+ *
+ * @param geom Geometry whose send_displs are exchanged; remote_send_displs set
+ * @param comm Subcommunicator matching this transition's exchange
+ */
+inline void init_remote_send_displs(ExchangeGeometry &geom, MPI_Comm comm)
+{
+  const int nparts = static_cast<int>(geom.send_displs.size());
+  geom.remote_send_displs.resize(nparts);
+  MPI_Alltoall(geom.send_displs.data(), 1, MPI_INT,
+               geom.remote_send_displs.data(), 1, MPI_INT, comm);
 }
 
 /**
@@ -594,7 +624,10 @@ inline void exchange_hybrid(
       if (!i_read) continue;
 
       size_t recv_byte_off = static_cast<size_t>(geom.recv_displs[p]) * elem_size;
-      size_t remote_off = static_cast<size_t>(geom.send_displs[myrank]) * elem_size;
+      // Index the *peer's* pack buffer with the peer's own displacement of our
+      // block (remote_send_displs[p] == peer p's send_displs[myrank]). Using the
+      // local send_displs[myrank] is wrong when src_trailing differs per rank.
+      size_t remote_off = static_cast<size_t>(geom.remote_send_displs[p]) * elem_size;
       char *remote_buf = reinterpret_cast<char *>(remote_pack_ptrs[p]);
       backend.memcpy(
           reinterpret_cast<char *>(recv_into) + recv_byte_off,

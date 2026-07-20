@@ -263,6 +263,34 @@ function(add_mpi_tests_varN_varD test_name test_file test_build)
   endforeach()
 endfunction()
 
+# Threaded smoke tests.
+#
+# The batch-parallel path splits each stage's batch across OMP_NUM_THREADS
+# chunks, so the thread count changes which code runs — the default tests
+# (1 thread, single chunk) never exercise it. The counts below cover the three
+# partition cases: an even split, an uneven split (remainder chunks), and more
+# threads than transforms (empty chunks / null plans).
+#
+# Small grids on purpose: these check correctness of the partitioning, not
+# performance.
+function(add_threaded_smoke_tests test_name test_file test_build)
+  foreach(THREADS 2 3 8)
+    add_test(
+      NAME ${test_name}_np4_threads${THREADS}
+      COMMAND
+        bash -c
+        "make ${test_build} && OMP_NUM_THREADS=${THREADS} mpirun -np 4 --oversubscribe ${CMAKE_BINARY_DIR}/${test_file} 16 3 0"
+    )
+  endforeach()
+  # Tiny grid where the batch is smaller than the thread count on some stages.
+  add_test(
+    NAME ${test_name}_np4_threads8_tiny
+    COMMAND
+      bash -c
+      "make ${test_build} && OMP_NUM_THREADS=8 mpirun -np 4 --oversubscribe ${CMAKE_BINARY_DIR}/${test_file} 4 3 0"
+  )
+endfunction()
+
 # Add tests to CTest
 add_serial_tests(fftw_unit_backend unit/test_fftw_backend test_fftw_backend)
 
@@ -284,6 +312,15 @@ if(PARAFAFT_FFTW3F_AVAILABLE)
   add_mpi_tests_varn_vard(fftw_c2c_nd_float c2c/test_fftw_c2c_nd_float
                           test_fftw_c2c_nd_float)
 endif()
+
+# Multi-threaded runs of the reference-comparison tests (see above). Both the
+# C2C and R2C stage plans are chunked, and R2C additionally chunks the
+# in-place R2C/C2R plans, so cover both.
+add_threaded_smoke_tests(fftw_c2c_nd c2c/test_fftw_c2c_nd test_fftw_c2c_nd)
+add_threaded_smoke_tests(fftw_r2c_nd r2c/test_fftw_r2c_nd test_fftw_r2c_nd)
+add_threaded_smoke_tests(fftw_r2c_padded_roundtrip_nd
+                         r2c/test_fftw_r2c_padded_roundtrip_nd
+                         test_fftw_r2c_padded_roundtrip_nd)
 
 # cuFFT tests (only added if CUDA is enabled)
 if(PARAFAFT_CUDA)

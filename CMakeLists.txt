@@ -17,6 +17,16 @@ option(PARAFAFT_CUFFTMP
 option(PARAFAFT_FFTW_THREADS
        "Use libfftw3_threads for threaded FFTW (preferred)" ON)
 option(PARAFAFT_FFTW_OMP "Use fftw3_omp for OpenMP-based threaded FFTW" ON)
+option(
+  PARAFAFT_BATCH_PARALLEL
+  "Parallelise each stage across its batch of 1D transforms instead of using FFTW's internal threading"
+  ON)
+set(PARAFAFT_BATCH_PARALLEL_BACKEND
+    "Auto"
+    CACHE STRING
+          "Executor for batch parallelism: Auto, OpenMP, Threads, or Serial")
+set_property(CACHE PARAFAFT_BATCH_PARALLEL_BACKEND
+             PROPERTY STRINGS Auto OpenMP Threads Serial)
 set(PARAFAFT_FFTW_LIB_DIR
     ""
     CACHE
@@ -158,6 +168,46 @@ if(PARAFAFT_FFTW_THREADING STREQUAL "Threads")
   target_compile_definitions(parafaft INTERFACE PARAFAFT_FFTW_THREADS)
 elseif(PARAFAFT_FFTW_THREADING STREQUAL "OpenMP")
   target_compile_definitions(parafaft INTERFACE PARAFAFT_FFTW_OMP)
+endif()
+
+# Batch parallelism: ParaFaFT splits each stage's batch of 1D transforms across
+# threads and runs serial FFTW plans per chunk. Pick the executor.
+#
+# Auto prefers OpenMP (cheaper barriers, and OMP_PROC_BIND/OMP_PLACES then
+# actually pin our workers) and falls back to a std::thread pool, which needs no
+# dependency beyond libpthread.
+if(PARAFAFT_BATCH_PARALLEL)
+  set(PARAFAFT_PARALLEL_RESOLVED "${PARAFAFT_BATCH_PARALLEL_BACKEND}")
+
+  if(PARAFAFT_PARALLEL_RESOLVED STREQUAL "Auto")
+    find_package(OpenMP QUIET)
+    if(OpenMP_CXX_FOUND)
+      set(PARAFAFT_PARALLEL_RESOLVED "OpenMP")
+    else()
+      set(PARAFAFT_PARALLEL_RESOLVED "Threads")
+    endif()
+  endif()
+
+  if(PARAFAFT_PARALLEL_RESOLVED STREQUAL "OpenMP")
+    find_package(OpenMP REQUIRED)
+    target_compile_definitions(parafaft INTERFACE PARAFAFT_BATCH_PARALLEL
+                                                  PARAFAFT_PARALLEL_OMP)
+    target_link_libraries(parafaft INTERFACE OpenMP::OpenMP_CXX)
+    message(STATUS "Batch parallelism: OpenMP executor")
+  elseif(PARAFAFT_PARALLEL_RESOLVED STREQUAL "Threads")
+    set(THREADS_PREFER_PTHREAD_FLAG ON)
+    find_package(Threads REQUIRED)
+    target_compile_definitions(parafaft INTERFACE PARAFAFT_BATCH_PARALLEL
+                                                  PARAFAFT_PARALLEL_THREADS)
+    target_link_libraries(parafaft INTERFACE Threads::Threads)
+    message(STATUS "Batch parallelism: std::thread pool executor (pthreads)")
+  else()
+    target_compile_definitions(parafaft INTERFACE PARAFAFT_BATCH_PARALLEL)
+    message(STATUS "Batch parallelism: serial executor (single chunk)")
+  endif()
+else()
+  message(
+    STATUS "Batch parallelism: disabled — using FFTW's internal threading")
 endif()
 
 target_link_libraries(parafaft INTERFACE ${PARAFAFT_LINK_LIBRARIES})
