@@ -45,6 +45,13 @@ target_link_libraries(test_fftw_backend parafaft::parafaft)
 set_target_properties(test_fftw_backend PROPERTIES RUNTIME_OUTPUT_DIRECTORY
                                                    ${CMAKE_BINARY_DIR}/unit)
 
+# Backend-independent exchange geometry arithmetic (64-bit counts and
+# displacements, single-partition identity). Host-only, no GPU required.
+add_executable(test_exchange_geometry unit/test_exchange_geometry.cpp)
+target_link_libraries(test_exchange_geometry parafaft::parafaft)
+set_target_properties(test_exchange_geometry PROPERTIES RUNTIME_OUTPUT_DIRECTORY
+                                                        ${CMAKE_BINARY_DIR}/unit)
+
 # Single-precision smoke test (only when libfftw3f was found)
 if(PARAFAFT_FFTW3F_AVAILABLE)
   add_executable(test_fftw_c2c_nd_float c2c/test_fftw_c2c_nd_float.cpp)
@@ -293,6 +300,8 @@ endfunction()
 
 # Add tests to CTest
 add_serial_tests(fftw_unit_backend unit/test_fftw_backend test_fftw_backend)
+add_serial_tests(unit_exchange_geometry unit/test_exchange_geometry
+                 test_exchange_geometry)
 
 # MPI tests
 add_mpi_tests_varn_vard(fftw_c2c_nd c2c/test_fftw_c2c_nd test_fftw_c2c_nd)

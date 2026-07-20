@@ -20,7 +20,10 @@
 // ============================================================================
 
 #include "./backend/fft_backend.hpp"
+#include <cstddef>
+#include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <mpi.h>
 #include <sstream>
 #include <stdexcept>
@@ -157,6 +160,105 @@ inline void subarray(MPI_Datatype datatype, int ndims, const int sizes[],
 }
 
 // ============================================================================
+// Processor grid topology
+// ============================================================================
+
+/**
+ * @brief Choose processor grid dimensions that respect node boundaries.
+ *
+ * MPI_Dims_create alone returns a balanced factorization in non-increasing
+ * order, with no idea where node boundaries fall. MPI_Cart_create then ranks
+ * row-major, so the *last* grid dimension is the rank-contiguous one. When
+ * that trailing dimension does not match the number of ranks per node, a grid
+ * dimension straddles nodes and the subcommunicator for that transition mixes
+ * intra-node and inter-node peers — the worst case for the exchange, which
+ * then pays intra-node synchronization costs across the network.
+ *
+ * Concretely, 8 ranks on 4-rank nodes gave dims {4,2}: the size-4 dimension
+ * has stride 2 and so spans both nodes. Pinning the trailing dimension to the
+ * node size instead yields {2,4}, where the size-4 subcommunicator is exactly
+ * one node and the size-2 subcommunicator is purely inter-node.
+ *
+ * Only applied when the job spans more than one node and the ranks divide
+ * evenly among nodes. A single-node job is topologically uniform, so its grid
+ * is left exactly as MPI_Dims_create chose it.
+ *
+ * @param nranks Total ranks to arrange
+ * @param ndims Number of grid dimensions (D-1)
+ * @param ppn Ranks per node; pass 1 to disable topology awareness
+ * @param[out] dims Grid dimensions, dims[ndims-1] being rank-contiguous
+ */
+inline void choose_dims(int nranks, int ndims, int ppn, int dims[])
+{
+  for (int i = 0; i < ndims; ++i)
+    dims[i] = 0;
+
+  const bool topology_helps = ndims >= 2 && ppn > 1 && nranks > ppn &&
+                              (nranks % ppn) == 0;
+  if (!topology_helps) {
+    MPI_Dims_create(nranks, ndims, dims);
+    return;
+  }
+
+  // Reserve the rank-contiguous dimension for one full node, then balance the
+  // remaining ranks (one entry per node) across the leading dimensions.
+  std::vector<int> leading(ndims - 1, 0);
+  MPI_Dims_create(nranks / ppn, ndims - 1, leading.data());
+  for (int i = 0; i < ndims - 1; ++i)
+    dims[i] = leading[i];
+  dims[ndims - 1] = ppn;
+}
+
+/**
+ * @brief Determine how many ranks of @p comm share a physical node.
+ *
+ * Collective over @p comm. Returns 1 — which makes choose_dims() a no-op —
+ * when the allocation is heterogeneous (nodes hosting different rank counts,
+ * where no single trailing dimension can match every node) or when the
+ * PARAFAFT_DISABLE_TOPO_GRID environment variable is set. The escape hatch
+ * exists so a bad detection can be worked around at run time rather than
+ * needing a rebuild.
+ *
+ * PARAFAFT_RANKS_PER_NODE overrides the detected value. That makes the
+ * multi-node grid reproducible on a single machine — running 8 oversubscribed
+ * ranks with the variable set to 4 builds the same grid a two-node job would
+ * — which is the only way to exercise the multi-node layout without a cluster.
+ * Values below 1 are ignored.
+ *
+ * @param comm Communicator to inspect
+ * @return Ranks per node, or 1 if unknown, uniform-free, or disabled
+ */
+inline int detect_ranks_per_node(MPI_Comm comm)
+{
+  const char *disable = std::getenv("PARAFAFT_DISABLE_TOPO_GRID");
+  if (disable != nullptr && disable[0] != '\0' && disable[0] != '0')
+    return 1;
+
+  const char *forced = std::getenv("PARAFAFT_RANKS_PER_NODE");
+  if (forced != nullptr && forced[0] != '\0') {
+    const int value = std::atoi(forced);
+    if (value >= 1)
+      return value;
+  }
+
+  MPI_Comm shared_comm;
+  MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL,
+                      &shared_comm);
+  int local_size = 0;
+  MPI_Comm_size(shared_comm, &local_size);
+  MPI_Comm_free(&shared_comm);
+
+  // Every rank must agree, otherwise no single trailing dimension fits.
+  int min_size = 0, max_size = 0;
+  MPI_Allreduce(&local_size, &min_size, 1, MPI_INT, MPI_MIN, comm);
+  MPI_Allreduce(&local_size, &max_size, 1, MPI_INT, MPI_MAX, comm);
+  if (min_size != max_size)
+    return 1;
+
+  return min_size;
+}
+
+// ============================================================================
 // Pre-computed Exchange Geometry
 // ============================================================================
 
@@ -169,17 +271,23 @@ inline void subarray(MPI_Datatype datatype, int ndims, const int sizes[],
  * heap allocations and redundant decompose() arithmetic.
  */
 struct ExchangeGeometry {
-  std::vector<int> send_counts;  ///< Per-peer send element counts
-  std::vector<int> send_displs;  ///< Per-peer send element displacements
-  std::vector<int> recv_counts;  ///< Per-peer recv element counts
-  std::vector<int> recv_displs;  ///< Per-peer recv element displacements
+  // Element counts and displacements are size_t, not int: displacements
+  // accumulate to the full local element count, which passes 2^31 for large
+  // grids (3D C2C double at N=1626 and up). Narrowing here produced negative
+  // displacements and silent corruption rather than a diagnosable failure.
+  // The only places that must be int are the MPI count arguments, which are
+  // narrowed through checked_mpi_count() at the call site.
+  std::vector<std::size_t> send_counts;  ///< Per-peer send element counts
+  std::vector<std::size_t> send_displs;  ///< Per-peer send element displacements
+  std::vector<std::size_t> recv_counts;  ///< Per-peer recv element counts
+  std::vector<std::size_t> recv_displs;  ///< Per-peer recv element displacements
   /// Per-peer offset of *our* block inside peer p's send/pack buffer, i.e.
   /// peer p's send_displs[myrank]. Needed by the P2P/IPC path, which reads
   /// directly out of a peer's pack buffer: send_displs is rank-dependent
   /// whenever a trailing axis is split unevenly (differing src_trailing), so
   /// the local send_displs[myrank] would index the peer's buffer wrongly.
   /// Populated by init_remote_send_displs() (collective). Empty otherwise.
-  std::vector<int> remote_send_displs;
+  std::vector<std::size_t> remote_send_displs;
   std::vector<int> src_n;        ///< Per-peer: decompose n for src axis
   std::vector<int> src_s;        ///< Per-peer: decompose s (start) for src axis
   std::vector<int> dst_n;        ///< Per-peer: decompose n for dst axis
@@ -194,6 +302,31 @@ struct ExchangeGeometry {
   bool dst_contiguous;           ///< True when dst_leading == 1 (no unpack needed)
   mutable std::vector<MPI_Request> requests;  ///< Pre-allocated MPI request buffer
 };
+
+/**
+ * @brief Narrow an element count to the int taken by MPI point-to-point calls.
+ *
+ * The geometry carries counts as size_t, but MPI_Isend/MPI_Irecv take int.
+ * A single message above 2^31 elements cannot be expressed, so fail loudly
+ * here rather than wrap to a negative count and corrupt the transfer.
+ *
+ * @param count Element count to narrow
+ * @param what Label naming the count, used in the exception message
+ * @return @p count as int
+ * @throws std::runtime_error when @p count exceeds INT_MAX
+ */
+inline int checked_mpi_count(std::size_t count, const char *what)
+{
+  if (count > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+    std::ostringstream msg;
+    msg << "ParaFaFT: " << what << " of " << count
+        << " elements exceeds the int count MPI point-to-point accepts ("
+        << std::numeric_limits<int>::max()
+        << "). Use more ranks so each message is smaller.";
+    throw std::runtime_error(msg.str());
+  }
+  return static_cast<int>(count);
+}
 
 /**
  * @brief Initialize exchange geometry for a single stage transition.
@@ -242,8 +375,8 @@ inline void init_exchange_geometry(
   for (int p = 0; p < nparts; ++p) {
     decompose(src_sizes[src_axis], nparts, p, geom.src_n[p], geom.src_s[p]);
     size_t count = geom.src_leading * geom.src_n[p] * geom.src_trailing;
-    geom.send_counts[p] = static_cast<int>(count);
-    geom.send_displs[p] = static_cast<int>(send_offset);
+    geom.send_counts[p] = count;
+    geom.send_displs[p] = send_offset;
     send_offset += count;
   }
 
@@ -251,8 +384,8 @@ inline void init_exchange_geometry(
   for (int p = 0; p < nparts; ++p) {
     decompose(dst_sizes[dst_axis], nparts, p, geom.dst_n[p], geom.dst_s[p]);
     size_t count = geom.dst_leading * geom.dst_n[p] * geom.dst_trailing;
-    geom.recv_counts[p] = static_cast<int>(count);
-    geom.recv_displs[p] = static_cast<int>(recv_offset);
+    geom.recv_counts[p] = count;
+    geom.recv_displs[p] = recv_offset;
     recv_offset += count;
   }
 
@@ -276,10 +409,12 @@ inline void init_exchange_geometry(
  */
 inline void init_remote_send_displs(ExchangeGeometry &geom, MPI_Comm comm)
 {
+  static_assert(sizeof(std::size_t) == 8,
+                "remote_send_displs is exchanged as MPI_UINT64_T");
   const int nparts = static_cast<int>(geom.send_displs.size());
   geom.remote_send_displs.resize(nparts);
-  MPI_Alltoall(geom.send_displs.data(), 1, MPI_INT,
-               geom.remote_send_displs.data(), 1, MPI_INT, comm);
+  MPI_Alltoall(geom.send_displs.data(), 1, MPI_UINT64_T,
+               geom.remote_send_displs.data(), 1, MPI_UINT64_T, comm);
 }
 
 /**
@@ -348,12 +483,28 @@ inline void exchange_local(
     // Strided src → contiguous dst: single memcpy2d
     size_t src_spitch = static_cast<size_t>(geom.src_axis_extent) * geom.src_trailing * elem_size;
     size_t row_bytes = static_cast<size_t>(geom.src_n[0]) * geom.src_trailing * elem_size;
+    // See the identity note below: at nparts == 1 the source stride vanishes
+    // and this is a linear copy, which must not go through the 2D path.
+    if (row_bytes == src_spitch) {
+      if (dst_array != src_array) {
+        backend.memcpy(dst_array, src_array,
+                       row_bytes * static_cast<size_t>(geom.src_leading));
+      }
+      return;
+    }
     backend.memcpy2d(dst_array, row_bytes, src_array, src_spitch,
                      row_bytes, geom.src_leading);
   } else if (geom.src_contiguous) {
     // Contiguous src → strided dst: single memcpy2d
     size_t dst_dpitch = static_cast<size_t>(geom.dst_axis_extent) * geom.dst_trailing * elem_size;
     size_t row_bytes = static_cast<size_t>(geom.dst_n[0]) * geom.dst_trailing * elem_size;
+    if (row_bytes == dst_dpitch) {
+      if (dst_array != src_array) {
+        backend.memcpy(dst_array, src_array,
+                       row_bytes * static_cast<size_t>(geom.dst_leading));
+      }
+      return;
+    }
     backend.memcpy2d(dst_array, dst_dpitch, src_array, row_bytes,
                      row_bytes, geom.dst_leading);
   } else {
@@ -361,11 +512,31 @@ inline void exchange_local(
     // (No sync needed between — both are on the same stream)
     size_t src_spitch = static_cast<size_t>(geom.src_axis_extent) * geom.src_trailing * elem_size;
     size_t src_row_bytes = static_cast<size_t>(geom.src_n[0]) * geom.src_trailing * elem_size;
-    backend.memcpy2d(pack_buf, src_row_bytes, src_array, src_spitch,
-                     src_row_bytes, geom.src_leading);
-
     size_t dst_dpitch = static_cast<size_t>(geom.dst_axis_extent) * geom.dst_trailing * elem_size;
     size_t dst_row_bytes = static_cast<size_t>(geom.dst_n[0]) * geom.dst_trailing * elem_size;
+
+    // Identity fast path. The sole partition owns the whole axis, so
+    // src_n[0] == src_axis_extent (and likewise for dst) and both memcpy2d
+    // calls degenerate to width == pitch, i.e. linear copies. Packing and
+    // unpacking then just moves the array to pack_buf and straight back:
+    // element order is unchanged, so the pair reduces to one flat copy.
+    //
+    // Skipping them is not only faster — it is required for large grids.
+    // A degenerate 2D copy spanning the full array exceeds the driver's 2D
+    // transfer limit once the array passes 4 GiB (3D R2C double at N=1024 is
+    // ~8.6 GB), which the driver rejects with "invalid argument".
+    size_t src_total = src_row_bytes * static_cast<size_t>(geom.src_leading);
+    size_t dst_total = dst_row_bytes * static_cast<size_t>(geom.dst_leading);
+    if (src_row_bytes == src_spitch && dst_row_bytes == dst_dpitch &&
+        src_total == dst_total) {
+      if (dst_array != src_array) {
+        backend.memcpy(dst_array, src_array, src_total);
+      }
+      return;
+    }
+
+    backend.memcpy2d(pack_buf, src_row_bytes, src_array, src_spitch,
+                     src_row_bytes, geom.src_leading);
     backend.memcpy2d(dst_array, dst_dpitch, pack_buf, dst_row_bytes,
                      dst_row_bytes, geom.dst_leading);
   }
@@ -450,7 +621,8 @@ inline void exchange_packed(
     size_t recv_byte_off = static_cast<size_t>(geom.recv_displs[p]) * elem_size;
     MPI_Request req;
     MPI_Irecv(reinterpret_cast<char *>(recv_into) + recv_byte_off,
-              geom.recv_counts[p], mpi_dtype, p, 0, comm, &req);
+              checked_mpi_count(geom.recv_counts[p], "recv count"),
+              mpi_dtype, p, 0, comm, &req);
     geom.requests.push_back(req);
   }
   for (int p = 0; p < nparts; ++p) {
@@ -458,7 +630,8 @@ inline void exchange_packed(
     size_t send_byte_off = static_cast<size_t>(geom.send_displs[p]) * elem_size;
     MPI_Request req;
     MPI_Isend(reinterpret_cast<char *>(send_from) + send_byte_off,
-              geom.send_counts[p], mpi_dtype, p, 0, comm, &req);
+              checked_mpi_count(geom.send_counts[p], "send count"),
+              mpi_dtype, p, 0, comm, &req);
     geom.requests.push_back(req);
   }
 
@@ -529,6 +702,7 @@ inline void exchange_hybrid(
     typename BackendT::Complex *pack_buf,
     void *const *remote_pack_ptrs,
     const char *peer_enabled,
+    bool phased,
     ExchangeGeometry &geom)
 {
   using Complex = typename BackendT::Complex;
@@ -575,7 +749,8 @@ inline void exchange_hybrid(
     size_t recv_byte_off = static_cast<size_t>(geom.recv_displs[p]) * elem_size;
     MPI_Request req;
     MPI_Irecv(reinterpret_cast<char *>(recv_into) + recv_byte_off,
-              geom.recv_counts[p], mpi_dtype, p, 0, comm, &req);
+              checked_mpi_count(geom.recv_counts[p], "recv count"),
+              mpi_dtype, p, 0, comm, &req);
     geom.requests.push_back(req);
   }
   for (int p = 0; p < nparts; ++p) {
@@ -583,7 +758,8 @@ inline void exchange_hybrid(
     size_t send_byte_off = static_cast<size_t>(geom.send_displs[p]) * elem_size;
     MPI_Request req;
     MPI_Isend(reinterpret_cast<char *>(pack_buf) + send_byte_off,
-              geom.send_counts[p], mpi_dtype, p, 0, comm, &req);
+              checked_mpi_count(geom.send_counts[p], "send count"),
+              mpi_dtype, p, 0, comm, &req);
     geom.requests.push_back(req);
   }
 
@@ -597,12 +773,13 @@ inline void exchange_hybrid(
         static_cast<size_t>(geom.send_counts[myrank]) * elem_size);
   }
 
-  // Two-phase P2P read schedule to avoid PCIe contention.
+  // P2P read schedule.
   //
-  // Simultaneous bidirectional reads between two GPUs on a shared PCIe
-  // switch degrade throughput by 10x+ non-deterministically.  We split
-  // all directed P2P reads into two phases such that no bidirectional
-  // pair (i reads j AND j reads i) appears in the same phase.
+  // On a shared PCIe switch, simultaneous bidirectional reads between two
+  // GPUs degrade throughput by 10x+ non-deterministically.  Where that
+  // applies (phased == true) the directed reads are split into two phases
+  // such that no bidirectional pair (i reads j AND j reads i) appears in the
+  // same phase.
   //
   // Assignment rule: for each pair {a,b} with a < b, the reader in
   // phase 0 is the lower rank when (a+b) is even, the higher rank
@@ -612,16 +789,25 @@ inline void exchange_hybrid(
   // Cost: 2 sequential phases of ceil((nparts-1)/2) × copy_time each,
   // plus one sync+barrier between phases.  For N=8 GPUs with 12 ms
   // per copy this is 2 × 4 × 12 ms = 96 ms, vs 672 ms fully serial.
-  for (int phase = 0; phase < 2; ++phase) {
+  //
+  // On a full-duplex fabric (NVLink/NVSwitch) that contention does not
+  // exist, so phased == false issues every read in one pass and skips the
+  // intervening fence: the reads then overlap instead of running as two
+  // dependent halves, and one sync + one collective barrier disappear from
+  // the critical path of every exchange.
+  const int nphases = phased ? 2 : 1;
+  for (int phase = 0; phase < nphases; ++phase) {
     for (int p = 0; p < nparts; ++p) {
       if (p == myrank || !peer_enabled[p]) continue;
-      int lo = (myrank < p) ? myrank : p;
-      int hi = (myrank < p) ? p : myrank;
-      // Lower rank reads first when (lo+hi) is even; higher reads first
-      // when odd.  XOR with phase to swap directions in phase 1.
-      bool lower_reads = (((lo + hi) % 2 == 0) != (phase == 1));
-      bool i_read = (myrank == lo) ? lower_reads : !lower_reads;
-      if (!i_read) continue;
+      if (phased) {
+        int lo = (myrank < p) ? myrank : p;
+        int hi = (myrank < p) ? p : myrank;
+        // Lower rank reads first when (lo+hi) is even; higher reads first
+        // when odd.  XOR with phase to swap directions in phase 1.
+        bool lower_reads = (((lo + hi) % 2 == 0) != (phase == 1));
+        bool i_read = (myrank == lo) ? lower_reads : !lower_reads;
+        if (!i_read) continue;
+      }
 
       size_t recv_byte_off = static_cast<size_t>(geom.recv_displs[p]) * elem_size;
       // Index the *peer's* pack buffer with the peer's own displacement of our
@@ -637,7 +823,7 @@ inline void exchange_hybrid(
     // Sync + barrier between phases so phase-0 reads complete before
     // phase-1 reads begin (avoids bidirectional traffic on the switch).
     // After the last phase the outer sync + barrier handles completion.
-    if (phase == 0) {
+    if (phased && phase == 0) {
       backend.sync();
       MPI_Barrier(comm);
     }
