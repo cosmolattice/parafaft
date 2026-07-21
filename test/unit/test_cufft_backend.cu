@@ -399,6 +399,38 @@ void test_r2c_c2r_inplace() {
   }
 }
 
+// Test 6: NVLink/full-duplex link detection (peer_link_is_top_tier)
+//
+// Exercises the NVML-via-dlopen detection path. The hardware answer for a
+// distinct pair is machine-dependent (NVLink vs PCIe), so we assert only the
+// invariants that must always hold: a device is trivially full-duplex with
+// itself, and the query is total and idempotent (no crash, stable result,
+// balanced nvmlInit/nvmlShutdown across repeated calls).
+void test_peer_link_detection() {
+  using Backend = parafaft::CuFFTBackend<>;
+
+  // Same device: always top-tier, no NVML involved.
+  bool self = Backend::peer_link_is_top_tier(0, 0);
+  std::cout << "Test peer-link self(0,0) = " << (self ? "true" : "false");
+  std::cout << (self ? " [PASS]" : " [FAIL]") << std::endl;
+
+  int device_count = 0;
+  if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count < 2) {
+    std::cout << "Test peer-link distinct: [SKIP] need >= 2 CUDA devices"
+              << std::endl;
+    return;
+  }
+
+  // Distinct pair: value is hardware-dependent; assert only that the detector
+  // is deterministic across repeated calls (catches NVML lifecycle bugs).
+  bool first = Backend::peer_link_is_top_tier(0, 1);
+  bool second = Backend::peer_link_is_top_tier(0, 1);
+  std::cout << "Test peer-link(0,1) = "
+            << (first ? "full-duplex (NVLink)" : "PCIe/unknown")
+            << ", idempotent = " << (first == second ? "yes" : "no");
+  std::cout << (first == second ? " [PASS]" : " [FAIL]") << std::endl;
+}
+
 int main(int argc, char *argv[]) {
   std::cout << "########################################" << std::endl;
   std::cout << "# TEST: unit/cufft_backend" << std::endl;
@@ -423,6 +455,7 @@ int main(int argc, char *argv[]) {
   test_multiple_stages();
   test_different_pointers();
   test_r2c_c2r_inplace();
+  test_peer_link_detection();
 
   std::cout << "================================" << std::endl;
   std::cout << "cuFFT backend tests complete." << std::endl;

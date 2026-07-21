@@ -274,6 +274,10 @@ if(PARAFAFT_CUDA)
       target_compile_definitions(parafaft INTERFACE PARAFAFT_CUDA_ENABLED)
     endif()
   endif()
+  # The cuFFT backend dlopen's libnvidia-ml.so.1 for NVLink detection. dlopen
+  # lives in libc on glibc >= 2.34 (CMAKE_DL_LIBS is then empty) and in libdl
+  # (-ldl) on older toolchains; linking CMAKE_DL_LIBS covers both.
+  target_link_libraries(parafaft INTERFACE ${CMAKE_DL_LIBS})
   set_property(TARGET parafaft PROPERTY CUDA_SEPARABLE_COMPILATION ON)
 endif()
 

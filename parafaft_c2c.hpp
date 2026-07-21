@@ -995,6 +995,14 @@ private:
           if (!Backend::peer_link_is_top_tier(my_device, devices[p]))
             local_needs_phased = true;
         }
+        // PARAFAFT_GPU_UNPHASED_P2P forces the single-pass schedule on a fabric
+        // we cannot positively classify as full-duplex — chiefly NVSwitch, where
+        // a GPU's NVLink remote endpoint is the switch (not the peer) so the
+        // detector conservatively reports PCIe. Must be set on every rank (the
+        // decision is agreed via MPI_LOR below). Overridden by FORCE_PHASED.
+        const char *unphased = std::getenv("PARAFAFT_GPU_UNPHASED_P2P");
+        if (unphased != nullptr && unphased[0] != '\0' && unphased[0] != '0')
+          local_needs_phased = false;
         const char *force_phased = std::getenv("PARAFAFT_GPU_FORCE_PHASED_P2P");
         if (force_phased != nullptr && force_phased[0] != '\0' &&
             force_phased[0] != '0')
@@ -1002,6 +1010,15 @@ private:
         int phased_flag = local_needs_phased ? 1 : 0;
         MPI_Allreduce(MPI_IN_PLACE, &phased_flag, 1, MPI_INT, MPI_LOR, comm);
         p2p_info_[t].needs_phased = (phased_flag != 0);
+        const char *verbose = std::getenv("PARAFAFT_GPU_VERBOSE_P2P");
+        if (verbose != nullptr && verbose[0] != '\0' && verbose[0] != '0' &&
+            my_subrank == 0) {
+          std::cerr << "ParaFaFT P2P transition " << t << ": "
+                    << (p2p_info_[t].needs_phased
+                            ? "PCIe/unknown -> phased (2-pass) reads"
+                            : "full-duplex (NVLink/xGMI) -> single-pass reads")
+                    << "\n";
+        }
 
         // Exchange IPC handles for pack_buffer_ (collective — all must call)
         using Handle = std::array<char, Backend::ipc_handle_size>;

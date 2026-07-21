@@ -22,7 +22,9 @@
 #include <cuda/std/complex>
 #include <cuda_runtime.h>
 #include <cufft.h>
+#include <dlfcn.h>
 #include <cstddef>
+#include <cstdio>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -539,7 +541,7 @@ public:
   }
 
   /**
-   * @brief Whether a peer link is a top-tier interconnect (e.g. NVLink).
+   * @brief Whether a peer link is a top-tier, full-duplex interconnect (NVLink).
    *
    * Decides whether P2P reads must be serialized into direction-separated
    * phases. That serialization exists only to dodge the throughput collapse
@@ -547,22 +549,105 @@ public:
    * PCIe switch; a full-duplex NVLink/NVSwitch fabric has no such pathology,
    * so phasing there merely halves the achievable bandwidth.
    *
-   * cudaDevP2PAttrPerformanceRank ranks links relatively, 0 being the best
-   * path available between these devices. Anything worse is treated as
-   * possibly PCIe-routed and kept on the conservative phased schedule. The
-   * same device (the oversubscribed single-GPU case) needs no phasing either.
-   * On query failure, report false so the caller keeps the safe behaviour.
+   * The CUDA runtime P2P attributes cannot answer this reliably:
+   * cudaDevP2PAttrPerformanceRank is a *relative* ranking, so on a uniform-PCIe
+   * box the PCIe link is the best available and reports rank 0 — indistinguishable
+   * from NVLink. We instead query NVML's NVLink port state directly, via dlopen
+   * so no NVML header or link dependency is added (libnvidia-ml.so.1 ships with
+   * the driver). We return true only when device @p src_dev has a live NVLink
+   * port whose remote endpoint is device @p dst_dev.
+   *
+   * Fails safe: any dlopen/dlsym/NVML/lookup failure, or a PCIe-only fabric,
+   * yields false and keeps the conservative phased schedule. NVSwitch systems
+   * also report false here (a GPU's NVLink remote endpoint is the switch, not
+   * the peer GPU), which over-phases safely; PARAFAFT_GPU_UNPHASED_P2P recovers
+   * that bandwidth. The same device (oversubscribed single-GPU) needs no phasing.
    */
   static bool peer_link_is_top_tier(int src_dev, int dst_dev) {
     if (src_dev == dst_dev)
       return true;
-    int perf_rank = 0;
-    if (cudaDeviceGetP2PAttribute(&perf_rank, cudaDevP2PAttrPerformanceRank,
-                                  src_dev, dst_dev) != cudaSuccess) {
+
+    // PCI addresses from CUDA, to match against NVML devices by bus id (robust
+    // to CUDA_VISIBLE_DEVICES reordering the CUDA ordinals).
+    cudaDeviceProp prop_src{}, prop_dst{};
+    if (cudaGetDeviceProperties(&prop_src, src_dev) != cudaSuccess ||
+        cudaGetDeviceProperties(&prop_dst, dst_dev) != cudaSuccess) {
       cudaGetLastError(); // clear sticky error; absence of data is not fatal
       return false;
     }
-    return perf_rank == 0;
+
+    void *lib = dlopen("libnvidia-ml.so.1", RTLD_LAZY);
+    if (!lib)
+      return false; // NVML unavailable → assume PCIe (safe default)
+
+    // NVML signatures resolved by name to avoid a header/link dependency.
+    using InitFn = unsigned int (*)();
+    using ShutdownFn = unsigned int (*)();
+    using HandleByPciFn = unsigned int (*)(const char *, void **);
+    using NvLinkStateFn = unsigned int (*)(void *, unsigned int, unsigned int *);
+    using NvLinkRemotePciFn = unsigned int (*)(void *, unsigned int, void *);
+    using GetPciInfoFn = unsigned int (*)(void *, void *);
+
+    auto fn_init = reinterpret_cast<InitFn>(dlsym(lib, "nvmlInit_v2"));
+    auto fn_shutdown = reinterpret_cast<ShutdownFn>(dlsym(lib, "nvmlShutdown"));
+    auto fn_handle_by_pci =
+        reinterpret_cast<HandleByPciFn>(dlsym(lib, "nvmlDeviceGetHandleByPciBusId_v2"));
+    auto fn_nvlink_state =
+        reinterpret_cast<NvLinkStateFn>(dlsym(lib, "nvmlDeviceGetNvLinkState"));
+    auto fn_nvlink_remote_pci =
+        reinterpret_cast<NvLinkRemotePciFn>(dlsym(lib, "nvmlDeviceGetNvLinkRemotePciInfo_v2"));
+    auto fn_get_pci_info =
+        reinterpret_cast<GetPciInfoFn>(dlsym(lib, "nvmlDeviceGetPciInfo_v3"));
+
+    if (!fn_init || !fn_shutdown || !fn_handle_by_pci || !fn_nvlink_state ||
+        !fn_nvlink_remote_pci || !fn_get_pci_info) {
+      dlclose(lib);
+      return false;
+    }
+
+    // Mirror the full nvmlPciInfo_t layout. NVML writes the whole struct, so a
+    // truncated mirror (only the fields we read) would let it overflow the
+    // stack — we size it fully and read just domain/bus/device.
+    struct NvmlPciInfo {
+      char busIdLegacy[16];
+      unsigned int domain, bus, device;
+      unsigned int pciDeviceId;
+      unsigned int pciSubSystemId;
+      char busId[32];
+    };
+
+    bool found = false;
+    if (fn_init() == 0) { // NVML_SUCCESS == 0
+      char bus_id_src[32], bus_id_dst[32];
+      std::snprintf(bus_id_src, sizeof(bus_id_src), "%08x:%02x:%02x.0",
+                    prop_src.pciDomainID, prop_src.pciBusID, prop_src.pciDeviceID);
+      std::snprintf(bus_id_dst, sizeof(bus_id_dst), "%08x:%02x:%02x.0",
+                    prop_dst.pciDomainID, prop_dst.pciBusID, prop_dst.pciDeviceID);
+
+      void *dev_src = nullptr, *dev_dst = nullptr;
+      if (fn_handle_by_pci(bus_id_src, &dev_src) == 0 &&
+          fn_handle_by_pci(bus_id_dst, &dev_dst) == 0) {
+        NvmlPciInfo pci_dst{};
+        fn_get_pci_info(dev_dst, &pci_dst);
+
+        // Enumerate NVLink ports on the source device (up to 18 on recent HW).
+        for (unsigned int link = 0; link < 18 && !found; ++link) {
+          unsigned int state = 0; // nvmlEnableState_t; NVML_FEATURE_ENABLED == 1
+          if (fn_nvlink_state(dev_src, link, &state) != 0 || state != 1)
+            continue;
+          NvmlPciInfo remote_pci{};
+          if (fn_nvlink_remote_pci(dev_src, link, &remote_pci) != 0)
+            continue;
+          if (remote_pci.domain == pci_dst.domain &&
+              remote_pci.bus == pci_dst.bus &&
+              remote_pci.device == pci_dst.device)
+            found = true;
+        }
+      }
+      fn_shutdown();
+    }
+    dlclose(lib);
+    return found;
   }
 
   static constexpr size_t ipc_handle_size = sizeof(cudaIpcMemHandle_t);

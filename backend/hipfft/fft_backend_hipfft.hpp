@@ -24,6 +24,7 @@
 #include <hip/hip_runtime.h>
 #include <hipfft/hipfft.h>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -537,18 +538,27 @@ public:
   }
 
   /**
-   * @brief Whether a peer link is a top-tier interconnect.
+   * @brief Whether a peer link is a top-tier, full-duplex interconnect (xGMI).
    *
    * Governs whether P2P reads are serialized into direction-separated phases
-   * to avoid bidirectional contention on a shared PCIe switch. Reports false
-   * for distinct devices, keeping the conservative phased schedule: this
-   * backend is untested on the AMD interconnects where it would matter, and
-   * an over-cautious schedule costs bandwidth while an under-cautious one
-   * costs correctness of the performance assumption. Same device needs no
-   * phasing.
+   * to avoid bidirectional contention on a shared PCIe switch; a full-duplex
+   * AMD Infinity Fabric (xGMI) link has no such pathology, so phasing there
+   * merely halves the achievable bandwidth. hipExtGetLinkTypeAndHopCount
+   * reports the link type between two devices directly.
+   *
+   * Fails safe: any query failure, or a PCIe-routed link, yields false and
+   * keeps the conservative phased schedule. Same device (oversubscribed
+   * single-GPU) needs no phasing.
    */
   static bool peer_link_is_top_tier(int src_dev, int dst_dev) {
-    return src_dev == dst_dev;
+    if (src_dev == dst_dev)
+      return true;
+    uint32_t link_type = 0, hop_count = 0;
+    if (hipExtGetLinkTypeAndHopCount(src_dev, dst_dev, &link_type, &hop_count) !=
+        hipSuccess)
+      return false;
+    // HSA_AMD_LINK_INFO_TYPE_XGMI == 4 (AMD Infinity Fabric, full-duplex).
+    return link_type == 4;
   }
 
   static constexpr size_t ipc_handle_size = sizeof(hipIpcMemHandle_t);
