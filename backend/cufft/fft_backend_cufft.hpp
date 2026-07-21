@@ -22,7 +22,12 @@
 #if defined(__CUDACC__) || defined(__CUDA_ARCH__) || defined(__NVCC__) || \
     defined(__NVCOMPILER_CUDA__)
 
-#include "../fft_backend.hpp"
+// NOTE: "../fft_backend.hpp" (the backend aggregator) is deliberately included
+// further down, just before CuFFTBackend — NOT here. fft_backend.hpp pulls in
+// fft_backend_cufftmp.hpp, which reuses cuvector/cuda::std::complex defined in
+// THIS header. Including the aggregator before those definitions creates a
+// cycle: cufftmp.hpp's re-include of this file is a guard no-op, so it sees
+// cuvector as undefined. Defining cuvector first breaks the cycle.
 #include <cuda/std/complex>
 #include <cuda_runtime.h>
 #include <cufft.h>
@@ -175,6 +180,11 @@ template <> struct cufft_traits<float> {
     return cufftExecC2R(p, in, out);
   }
 };
+
+// Safe to pull in the aggregator now: cuvector and cufft_traits above are
+// defined, so the cufftmp backend reached through here finds what it reuses.
+// CuFFTBackend below needs FFTDirection / FFTPlanFlag from this header.
+#include "../fft_backend.hpp"
 
 /**
  * @brief cuFFT backend for GPU-accelerated FFT operations.
