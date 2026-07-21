@@ -16,7 +16,11 @@
 #ifndef PARAFAFT_BACKEND_CUFFT_HPP
 #define PARAFAFT_BACKEND_CUFFT_HPP
 
-#if defined(__CUDACC__) || defined(__CUDA_ARCH__) || defined(__NVCC__)
+// __NVCOMPILER_CUDA__ covers nvc++ -cuda (the cuFFTMp build): it defines none
+// of __CUDACC__/__NVCC__, so without it this backend — the source of cuvector
+// and cuda::std::complex that fft_backend_cufftmp.hpp reuses — is compiled out.
+#if defined(__CUDACC__) || defined(__CUDA_ARCH__) || defined(__NVCC__) || \
+    defined(__NVCOMPILER_CUDA__)
 
 #include "../fft_backend.hpp"
 #include <cuda/std/complex>
