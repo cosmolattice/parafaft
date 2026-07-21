@@ -224,7 +224,7 @@ def cores_axis(ax, show_label=True):
     sec = ax.secondary_xaxis("top", functions=(lambda n: n * CORES_PER_NODE,
                                                lambda c: c / CORES_PER_NODE))
     if show_label:
-        sec.set_xlabel(f"# CPU cores ({CORES_PER_NODE}/node)", fontsize=XLABEL_FS, labelpad=6)
+        sec.set_xlabel(f"CPU cores ({CORES_PER_NODE}/node)", fontsize=XLABEL_FS, labelpad=6)
     sec.tick_params(axis="x", length=3, labelsize=XTICK_FS, colors=C_AXIS, labelcolor=C_INK2)
     sec.set_xticks([n * CORES_PER_NODE for n in nodes])
     sec.set_xticklabels([_fmt(n * CORES_PER_NODE) for n in nodes])
@@ -293,18 +293,13 @@ def panel_label(ax, text):
 
 
 def ideal_ref(ax, groups):
-    """Draw one 1/p slope guide from the widest ParaFaFT sweep, labelled inline."""
-    if not groups:
-        return
-    N, x, t, e = max(groups, key=lambda g: len(g[1]))  # most points = widest span
-    x = np.asarray(x, float)
-    if len(x) < 2:
-        return
-    ideal = t[0] * x[0] / x
-    ax.plot(x, ideal, zorder=0, **ideal_kw())
-    imid = len(x) // 2
-    ax.annotate("ideal", (x[imid], ideal[imid]), textcoords="offset points",
-                xytext=(7, -9), ha="left", va="top", color=C_IDEAL, fontsize=11)
+    """Dotted 1/p slope guide under every ParaFaFT sweep, each anchored at its own
+    first point. Unlabelled; the dotted style reads as the ideal reference."""
+    for N, x, t, e in groups:
+        if len(x) < 2:
+            continue
+        x = np.asarray(x, float)
+        ax.plot(x, t[0] * x[0] / x, zorder=0, **ideal_kw())
 
 
 def strong_legends(fig, cmap, nmap):
@@ -354,7 +349,6 @@ def plot_strong(results, outdir):
     fig.subplots_adjust(left=0.07, right=0.86, top=0.82, bottom=0.15, wspace=0.08)
 
     para = ("parafaft_mean", "parafaft_std")
-    mid = len(panels) // 2  # the CPU-cores caption goes on the centre panel only
     for i, (ax, (key, title, base, is_cpu)) in enumerate(zip(axes, panels)):
         d = results[key]
         para_groups = groups_by_N(d, *para, tag=f"{title} ParaFaFT")
@@ -375,7 +369,9 @@ def plot_strong(results, outdir):
 
         ax.set_xscale("log", base=2)
         ax.set_yscale("log")
-        cores_axis(ax, show_label=(i == mid)) if is_cpu else nodes_ticks(ax)
+        # Top cores ticks on the CPU panels; the caption is drawn once, figure-
+        # centred (below), so it lines up with the bottom '# nodes' label.
+        cores_axis(ax, show_label=False) if is_cpu else nodes_ticks(ax)
         # One dotted 1/p slope guide per panel (all N share the -1 slope on log-log),
         # anchored to the widest ParaFaFT sweep and labelled inline rather than in
         # the legend, as the companion figures do.
@@ -387,8 +383,24 @@ def plot_strong(results, outdir):
     # space. The fastest measurement (GPU at 32) is ~8e-2, so this clips only tails.
     axes[0].set_ylim(bottom=4e-2)
     axes[0].set_ylabel("time per r2c+c2r transform [s]")
-    fig.supxlabel("# nodes (1 GPU = 1 node)",
-                  y=0.03, fontsize=XLABEL_FS)
+
+    # x captions belong to their own unit: nodes/CPU-cores span the CPU panels,
+    # GPUs the GPU panel. Centre each over the panels it describes.
+    def span_center(group):
+        pos = [ax.get_position() for ax in group]
+        return 0.5 * (min(p.x0 for p in pos) + max(p.x1 for p in pos))
+
+    cpu_axes = [ax for ax, p in zip(axes, panels) if p[3]]
+    if cpu_axes:
+        cx = span_center(cpu_axes)
+        fig.text(cx, 0.03, "nodes", ha="center", va="bottom",
+                 fontsize=XLABEL_FS, color=C_STEP)
+        fig.text(cx, 0.915, f"CPU cores ({CORES_PER_NODE}/node)", ha="center",
+                 va="bottom", fontsize=XLABEL_FS, color=C_STEP)
+    for ax, p in zip(axes, panels):
+        if not p[3]:  # GPU panel: one GPU per rank, so the axis counts GPUs
+            fig.text(span_center([ax]), 0.03, "GPUs", ha="center", va="bottom",
+                     fontsize=XLABEL_FS, color=C_STEP)
 
     strong_legends(fig, cmap, nmap)
     _save(fig, outdir, "strong_scaling")
@@ -437,7 +449,7 @@ def plot_weak(results, outdir):
 
     ax.set_xscale("log", base=2)
     ax.set_yscale("log")
-    ax.set_xlabel("# nodes  (grid $N$ grows to keep work/process fixed)", fontsize=XLABEL_FS)
+    ax.set_xlabel("nodes  (grid $N$ grows to keep work/process fixed)", fontsize=XLABEL_FS)
     ax.set_ylabel("time per r2c+c2r transform [s]")
     ax.set_title("ParaFaFT weak scaling (3D R2C)", pad=28)
     cores_axis(ax)
