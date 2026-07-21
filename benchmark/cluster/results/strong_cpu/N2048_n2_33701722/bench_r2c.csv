@@ -1,0 +1,2 @@
+mpi_procs,threads,N,parafaft_mean,parafaft_std,fftw_mean,fftw_std,iterations
+256,1,2048,8.417264,0.210464,8.675124,0.101621,20
