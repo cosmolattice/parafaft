@@ -61,24 +61,35 @@ build_gpu() {
   local extra=()
   local targets=(bench_r2c_cuda)
 
-  # cuFFTMp baseline is opt-in: it needs cuFFTMp + NVSHMEM, and the CMake option
-  # hard-errors if they are not found. Enable with USE_CUFFTMP=1.
+  # Compiler + CUDA-language flags differ by mode.
+  #   * Plain cuFFT build: g++ as nvcc's host compiler. CMake's enable_language(CUDA)
+  #     dispatches .cu files to nvcc, so we pass the nvcc host/arch flags.
+  #   * cuFFTMp build: MUST use nvc++. cuFFTMp is only cleanly linkable through
+  #     NVHPC's `-cudalib=cufftmp`, and CMakeLists takes that path ONLY when
+  #     CMAKE_CXX_COMPILER_ID is NVHPC. With g++ it falls back to hunting for
+  #     libcufftMp.so / libnvshmem_host.so and dies with "cuFFTMp/NVSHMEM not
+  #     found". Under nvc++ the CUDA language is not enabled (nvc++ compiles .cu
+  #     as CXX via -cuda), so the nvcc host/arch flags do not apply.
+  local cxx=g++
+  local mode_flags=(-DCMAKE_CUDA_HOST_COMPILER=g++ -DCMAKE_CUDA_ARCHITECTURES=80)
+
   if [ "${USE_CUFFTMP:-0}" = "1" ]; then
     extra+=(-DPARAFAFT_CUFFTMP=ON)
     targets+=(bench_r2c_cufftmp)
-    echo ">> cuFFTMp baseline ENABLED (USE_CUFFTMP=1)"
+    cxx=nvc++                 # from the NVHPC module loaded above (on PATH)
+    mode_flags=()             # nvcc host/arch flags are inert on the NVHPC path
+    echo ">> cuFFTMp baseline ENABLED (USE_CUFFTMP=1) — building with nvc++"
   else
     extra+=(-DPARAFAFT_CUFFTMP=OFF)   # explicit: never inherit a stale cached ON
   fi
 
-  echo ">> Configuring GPU build in ${PARAFAFT_GPU_BUILD}"
+  echo ">> Configuring GPU build in ${PARAFAFT_GPU_BUILD} (CXX=${cxx})"
   cmake -S "${PARAFAFT_ROOT}" -B "${PARAFAFT_GPU_BUILD}" \
     -DCMAKE_BUILD_TYPE=Release \
     -DPARAFAFT_BENCH=ON \
     -DPARAFAFT_CUDA=ON \
-    -DCMAKE_CXX_COMPILER=g++ \
-    -DCMAKE_CUDA_HOST_COMPILER=g++ \
-    -DCMAKE_CUDA_ARCHITECTURES=80 \
+    -DCMAKE_CXX_COMPILER="${cxx}" \
+    "${mode_flags[@]}" \
     "${extra[@]}" \
     || return 1
 
