@@ -181,10 +181,17 @@ template <> struct cufft_traits<float> {
   }
 };
 
-// Safe to pull in the aggregator now: cuvector and cufft_traits above are
-// defined, so the cufftmp backend reached through here finds what it reuses.
-// CuFFTBackend below needs FFTDirection / FFTPlanFlag from this header.
+} // namespace parafaft
+
+// Pull in the aggregator now that cuvector / cufft_traits are defined, so the
+// cufftmp backend reached through here finds what it reuses. It MUST sit at
+// global scope, outside namespace parafaft: fft_backend.hpp transitively
+// includes <algorithm>, <omp.h>, etc., and nesting those inside parafaft would
+// declare the whole standard library as parafaft::std. CuFFTBackend below needs
+// FFTDirection / FFTPlanFlag from this header.
 #include "../fft_backend.hpp"
+
+namespace parafaft {
 
 /**
  * @brief cuFFT backend for GPU-accelerated FFT operations.
