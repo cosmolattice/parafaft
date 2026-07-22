@@ -60,27 +60,34 @@ fi
 # ITERS mirror the original sweeps (N=1024 -> 50, N>=1536 -> 20). Walltimes are
 # bumped vs. the ParaFaFT-only jobs because each job now runs a second binary;
 # they are ceilings — the job exits as soon as the point finishes.
+# Walltimes are measured, not guessed: a full matched-pair job (both binaries,
+# incl. host fill + cuFFT/cuFFTMp planning + warmup + 2x srun launch) ran in
+# 0:49-1:27 across N=1024..2048 at 16 GPUs (sacct on jobs 337122xx). Overhead is
+# ~constant ~45s and compute is <40s even at N=2048, and g32 is faster than g16
+# (less work/rank, fill split over more ranks), so the same-N g16 elapsed bounds
+# every point. Limits below are that bound rounded up to ~3x — short jobs
+# backfill on the small `gpu` partition far sooner than the old 25-50min ceilings.
 POINTS=(
   # N=1024 (~26 GB), from submit_strong_gpu.sh, minus the OOM g=1 point
-  "1024  2 00:30:00 50"
-  "1024  4 00:25:00 50"
-  "1024  8 00:25:00 50"
-  "1024 16 00:25:00 50"
-  "1024 32 00:25:00 50"
+  "1024  2 00:04:00 50"
+  "1024  4 00:04:00 50"
+  "1024  8 00:04:00 50"
+  "1024 16 00:04:00 50"
+  "1024 32 00:04:00 50"
 
   # N=1536 (~29 GB), from submit_strong_gpu_large.sh, minus the OOM g=4 point
-  "1536  8 00:30:00 20"
-  "1536 16 00:30:00 20"
-  "1536 32 00:30:00 20"
+  "1536  8 00:04:00 20"
+  "1536 16 00:04:00 20"
+  "1536 32 00:04:00 20"
 
   # N=2048 (~69 GB), from submit_strong_gpu_large.sh
-  "2048 16 00:50:00 20"
-  "2048 32 00:45:00 20"
+  "2048 16 00:05:00 20"
+  "2048 32 00:05:00 20"
 
   # --- the point that was left out (no ParaFaFT baseline yet; 16 nodes) --------
   # Uncomment to also fill N=2048 g=64. This job produces BOTH the missing
   # ParaFaFT+cuFFT datapoint and its cuFFTMp partner.
-  # "2048 64 00:45:00 20"
+  # "2048 64 00:05:00 20"
 )
 
 echo ">> cuFFTMp comparison sweep — ${#POINTS[@]} points (USE_CUFFTMP=1)"
