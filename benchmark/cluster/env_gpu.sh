@@ -49,6 +49,31 @@ module load lib/UCX-CUDA/1.18.0-GCCcore-14.2.0-CUDA-12.8.0
 if [ "${USE_CUFFTMP:-0}" = "1" ]; then
   module load compiler/NVHPC/25.3-CUDA-12.8.0
   export NVHPC_ROOT="${EBROOTNVHPC:?NVHPC module loaded but EBROOTNVHPC unset — check module name}"
+
+  # The EasyBuild NVHPC layout nests the SDK under Linux_x86_64/<ver>/, so the
+  # bare ${NVHPC_ROOT}/math_libs that cmake/cufftmp.cmake probes does not exist
+  # and the finder reports CUFFTMP_INCLUDE_DIR NOTFOUND. Locate the real dirs
+  # and export them so the finder (via *_HOME) and build_gpu (via -I) pick up.
+  #
+  # cuFFTMp ships DROP-IN cufft.h / cufftXt.h in math_libs/<ver>/include/cufftmp;
+  # that dir MUST precede the regular CUDA include, else cufftMp.h aborts with
+  # "cuFFT and cuFFTMp version mismatch". build_gpu prepends it via -I.
+  _pf_mp_h="$(find "${NVHPC_ROOT}/Linux_x86_64" -path '*/cufftmp/cufftMp.h' 2>/dev/null | head -1)"
+  _pf_shmem_h="$(find "${NVHPC_ROOT}/Linux_x86_64" -name nvshmem.h 2>/dev/null | head -1)"
+  if [ -n "${_pf_mp_h}" ]; then
+    export PARAFAFT_CUFFTMP_INCLUDE="${_pf_mp_h%/*}"                    # .../include/cufftmp
+    export CUFFTMP_HOME="${PARAFAFT_CUFFTMP_INCLUDE%/include/cufftmp}"  # .../math_libs/<ver>
+    echo ">> cuFFTMp include: ${PARAFAFT_CUFFTMP_INCLUDE}"
+  else
+    echo ">> WARN: cufftMp.h not found under ${NVHPC_ROOT}/Linux_x86_64"
+  fi
+  if [ -n "${_pf_shmem_h}" ]; then
+    export PARAFAFT_NVSHMEM_INCLUDE="${_pf_shmem_h%/*}"                 # .../nvshmem/include
+    export NVSHMEM_HOME="${PARAFAFT_NVSHMEM_INCLUDE%/include}"          # .../nvshmem
+    echo ">> NVSHMEM include: ${PARAFAFT_NVSHMEM_INCLUDE}"
+  else
+    echo ">> WARN: nvshmem.h not found under ${NVHPC_ROOT}/Linux_x86_64"
+  fi
 fi
 
 module list 2>&1 || true
@@ -77,8 +102,15 @@ build_gpu() {
     extra+=(-DPARAFAFT_CUFFTMP=ON)
     targets+=(bench_r2c_cufftmp)
     cxx=nvc++                 # from the NVHPC module loaded above (on PATH)
-    mode_flags=()             # nvcc host/arch flags are inert on the NVHPC path
-    echo ">> cuFFTMp baseline ENABLED (USE_CUFFTMP=1) — building with nvc++"
+    # Prepend the cuFFTMp drop-in include (and NVSHMEM) so <cufft.h> resolves to
+    # the cuFFTMp variant ahead of the regular CUDA include — otherwise
+    # cufftMp.h's version guard aborts the build. CMAKE_CXX_FLAGS lands early on
+    # the compile line, ahead of nvc++'s -cudalib=cufftmp implicit paths.
+    local mp_I=""
+    [ -n "${PARAFAFT_CUFFTMP_INCLUDE:-}" ] && mp_I="-I${PARAFAFT_CUFFTMP_INCLUDE}"
+    [ -n "${PARAFAFT_NVSHMEM_INCLUDE:-}" ] && mp_I="${mp_I:+${mp_I} }-I${PARAFAFT_NVSHMEM_INCLUDE}"
+    mode_flags=(-DCMAKE_CXX_FLAGS="${mp_I}")   # nvcc host/arch flags inert on NVHPC path
+    echo ">> cuFFTMp baseline ENABLED (USE_CUFFTMP=1) — building with nvc++; extra includes: ${mp_I:-<none>}"
   else
     extra+=(-DPARAFAFT_CUFFTMP=OFF)   # explicit: never inherit a stale cached ON
   fi
