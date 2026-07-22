@@ -1,0 +1,2 @@
+mpi_procs,N,parafaft_mean,parafaft_std,iterations
+4,1024,0.036674,0.001755,50
