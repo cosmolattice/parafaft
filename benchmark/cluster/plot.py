@@ -344,7 +344,7 @@ def plot_strong(results, outdir):
     ]
     panels = [p for p in panels if results.get(p[0])]
     n = len(panels)
-    fig, axes = plt.subplots(1, n, figsize=(4.5 * n, 4.3), sharey=True, squeeze=False)
+    fig, axes = plt.subplots(1, n, figsize=(4.5 * n, 5.8), sharey=True, squeeze=False)
     axes = axes[0]
     fig.subplots_adjust(left=0.07, right=0.86, top=0.82, bottom=0.15, wspace=0.08)
 
