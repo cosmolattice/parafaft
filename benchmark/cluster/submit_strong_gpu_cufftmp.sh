@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # =============================================================================
 # Launch the cuFFTMp COMPARISON — one INDEPENDENT SLURM job per (grid, GPUs)
-# point, at EXACTLY the points where a ParaFaFT+cuFFT datapoint already exists
-# (results/strong_gpu__bench_r2c_cuda.csv). Every job runs ParaFaFT+cuFFT and
-# then the cuFFTMp baseline back-to-back in the same allocation, so the two
-# curves are measured on the same nodes/GPUs — a clean matched comparison.
+# point still MISSING from results/strong_gpu__bench_r2c_cufftmp.csv.
+#
+# This is a BACK-FILL run, not the full sweep. Every point below already has its
+# ParaFaFT+cuFFT datapoint in results/strong_gpu__bench_r2c_cuda.csv, so the
+# jobs run ONLY the cuFFTMp binary (PF_SKIP_PARAFAFT=1). Each binary pays
+# ~20-25 s of fixed cost (host fill + H2D + plan + warmup + srun launch)
+# independent of iteration count; dropping the redundant ParaFaFT run roughly
+# halves the walltime, which is what makes 2-minute limits viable.
 #
 #     ./submit_strong_gpu_cufftmp.sh              # submit the sweep
 #     DRY_RUN=1 ./submit_strong_gpu_cufftmp.sh    # print the plan, submit nothing
@@ -20,17 +24,26 @@
 # env_gpu.sh into the very same build dir and runs both binaries from it.
 #
 # ---------------------------------------------------------------------------
-# Point list — matches results/strong_gpu__bench_r2c_cuda.csv exactly (10 pts)
+# What is still missing (cuda CSV has 10 points, cufftmp CSV has 5)
 # ---------------------------------------------------------------------------
-# The intended ParaFaFT sweep was larger; three points never produced data:
-#   * N=1024 g=1  — OOM (cudaMemcpyAsync: invalid argument); a 26 GB grid does
-#                   not fit one 40 GB A100. Cannot form a matched pair here.
-#   * N=1536 g=4  — OOM (cufftPlanMany C2C backward, code 5) planning on 4 GPUs.
-#                   Cannot form a matched pair here.
-#   * N=2048 g=64 — never submitted (16 nodes, the "drop if tight" point). This
-#                   is the only runnable gap; see the commented block below to
-#                   add it (it has NO ParaFaFT baseline yet, so this job would
-#                   also produce the missing ParaFaFT+cuFFT datapoint).
+# Collected already: (4,1024) (8,1024) (16,1024) (16,1536) (16,2048).
+# Missing, and therefore submitted below:
+#   * N=1024 g=2, N=1536 g=8 — these DID run (jobs 33712214 / 33712219): the
+#     ParaFaFT half succeeded, then cuFFTMp aborted in NVSHMEM with
+#     "cuMemCreate failed" (CUDA out of memory) while growing the symmetric
+#     heap. That is a memory wall, not a time limit, so a plain resubmit will
+#     most likely fail again — but it fails in well under a minute, so it costs
+#     almost nothing to confirm. Drop these two lines if you need the slots.
+#   * N=1024 g=32, N=1536 g=32, N=2048 g=32 — queued but cancelled before they
+#     ran. These are the ones that should actually produce data.
+#
+# Points with no ParaFaFT baseline at all, hence not here:
+#   * N=1024 g=1  — OOM (cudaMemcpyAsync: invalid argument); 26 GB on one 40 GB
+#                   A100.
+#   * N=1536 g=4  — OOM (cufftPlanMany C2C backward, code 5).
+#   * N=2048 g=64 — never submitted (16 nodes). If you add it back, it needs
+#                   PF_SKIP_PARAFAFT=0 so the job also produces the ParaFaFT
+#                   datapoint, and a longer limit (~00:04:00).
 # =============================================================================
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]:-$0}")"
@@ -40,6 +53,10 @@ DRY_RUN="${DRY_RUN:-0}"
 # Must be set BEFORE sourcing env_gpu.sh — it gates the NVHPC module load and
 # selects the build_gpu_cufftmp build dir. Exported so job_gpu.slurm inherits it.
 export USE_CUFFTMP=1
+
+# Every point below already has its ParaFaFT+cuFFT datapoint, so the jobs run
+# the cuFFTMp binary only. Set PF_SKIP_PARAFAFT=0 to restore matched pairs.
+export PF_SKIP_PARAFAFT="${PF_SKIP_PARAFAFT:-1}"
 
 [ "$DRY_RUN" = "1" ] || source ./env_gpu.sh
 
@@ -56,41 +73,54 @@ if [ "$DRY_RUN" != "1" ]; then
   mkdir -p results/logs
 fi
 
-# "N GPUS TIME ITERS" — one row per existing ParaFaFT+cuFFT datapoint.
-# ITERS mirror the original sweeps (N=1024 -> 50, N>=1536 -> 20). Walltimes are
-# bumped vs. the ParaFaFT-only jobs because each job now runs a second binary;
-# they are ceilings — the job exits as soon as the point finishes.
-# Walltimes are measured, not guessed: a full matched-pair job (both binaries,
-# incl. host fill + cuFFT/cuFFTMp planning + warmup + 2x srun launch) ran in
-# 0:49-1:27 across N=1024..2048 at 16 GPUs (sacct on jobs 337122xx). Overhead is
-# ~constant ~45s and compute is <40s even at N=2048, and g32 is faster than g16
-# (less work/rank, fill split over more ranks), so the same-N g16 elapsed bounds
-# every point. Limits below are that bound rounded up to ~3x — short jobs
-# backfill on the small `gpu` partition far sooner than the old 25-50min ceilings.
+# "N GPUS TIME ITERS" — one row per MISSING cuFFTMp datapoint.
+#
+# ITERS: 25 everywhere (down from 50 at N=1024). The timed loop is not what
+# costs walltime — see below — so a uniform 25 keeps the error bars respectable
+# without lengthening any job appreciably.
+#
+# TIME: derived from measurements, not padded guesses. Decomposing the three
+# completed matched-pair jobs at g=16 (sacct, jobs 337122xx) into timed compute
+# = iters x (cuFFT_mean + cuFFTMp_mean) and the remainder:
+#
+#     N      elapsed   timed compute   fixed cost (2 binaries)
+#     1024   1:05      12 s            ~53 s
+#     1536   0:57      17 s            ~40 s
+#     2048   1:27      38 s            ~49 s
+#
+# So ~45 s of every job was setup, ~22 s per binary: host fill of the local
+# slab (a per-element index loop, the largest term), H2D upload, cuFFT/cuFFTMp
+# plan creation, one warmup transform, and the srun launch. Running cuFFTMp
+# alone removes one full copy of that.
+#
+# Per-point budget = single-binary fixed cost + 25 x cuFFTMp_mean, with the
+# cuFFTMp mean bounded above by the measured ParaFaFT mean at the same point
+# (cuFFTMp ran 0.72-0.81x ParaFaFT at every point measured so far):
+#
+#     N     g    fill (GB/rank)   est. fixed   25 x t   total
+#     1024   2   13.4             ~40 s        ~3 s     ~43 s
+#     1024  32    0.84            ~14 s        ~2 s     ~16 s
+#     1536   8    3.6             ~20 s       ~14 s     ~34 s
+#     1536  32    0.91            ~14 s        ~7 s     ~21 s
+#     2048  32    2.15            ~17 s       ~15 s     ~32 s
+#
+# 00:02:00 covers the worst of these with ~3x headroom, so one limit for all.
+# Going lower buys nothing: at this size SLURM backfills on node count, not on
+# walltime, and the g=32 points need 8 nodes each either way.
 POINTS=(
-  # N=1024 (~26 GB), from submit_strong_gpu.sh, minus the OOM g=1 point
-  "1024  2 00:04:00 50"
-  "1024  4 00:04:00 50"
-  "1024  8 00:04:00 50"
-  "1024 16 00:04:00 50"
-  "1024 32 00:04:00 50"
+  # Cancelled before running — these are the ones that should yield data.
+  "1024 32 00:02:00 25"
+  "1536 32 00:02:00 25"
+  "2048 32 00:02:00 25"
 
-  # N=1536 (~29 GB), from submit_strong_gpu_large.sh, minus the OOM g=4 point
-  "1536  8 00:04:00 20"
-  "1536 16 00:04:00 20"
-  "1536 32 00:04:00 20"
-
-  # N=2048 (~69 GB), from submit_strong_gpu_large.sh
-  "2048 16 00:05:00 20"
-  "2048 32 00:05:00 20"
-
-  # --- the point that was left out (no ParaFaFT baseline yet; 16 nodes) --------
-  # Uncomment to also fill N=2048 g=64. This job produces BOTH the missing
-  # ParaFaFT+cuFFT datapoint and its cuFFTMp partner.
-  # "2048 64 00:05:00 20"
+  # Ran and died in NVSHMEM with "cuMemCreate failed" (CUDA OOM growing the
+  # symmetric heap). Expect a repeat; they abort in <1 min. Drop if slots are
+  # tight.
+  "1024  2 00:02:00 25"
+  "1536  8 00:02:00 25"
 )
 
-echo ">> cuFFTMp comparison sweep — ${#POINTS[@]} points (USE_CUFFTMP=1)"
+echo ">> cuFFTMp back-fill — ${#POINTS[@]} missing points (USE_CUFFTMP=1, PF_SKIP_PARAFAFT=${PF_SKIP_PARAFAFT})"
 submitted=0
 for pt in "${POINTS[@]}"; do
   read -r N G TIME ITERS <<< "$pt"
@@ -101,7 +131,7 @@ for pt in "${POINTS[@]}"; do
   sbatch -J "strgpu-N${N}-g${G}" \
     --nodes="${NODES}" --ntasks-per-node="${TPN}" --gres=gpu:a100:"${TPN}" --cpus-per-task=16 \
     --time="${TIME}" --output="results/logs/parafaft-%x-%j.out" \
-    --export=ALL,PF_N="${N}",PF_ITERS="${ITERS}",PF_GPUS="${G}",PF_TAG=strong_gpu,USE_CUFFTMP=1 \
+    --export=ALL,PF_N="${N}",PF_ITERS="${ITERS}",PF_GPUS="${G}",PF_TAG=strong_gpu,USE_CUFFTMP=1,PF_SKIP_PARAFAFT="${PF_SKIP_PARAFAFT}" \
     job_gpu.slurm
   submitted=$(( submitted + 1 ))
 done
