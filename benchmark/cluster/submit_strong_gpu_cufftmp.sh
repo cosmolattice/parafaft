@@ -12,6 +12,7 @@
 #
 #     ./submit_strong_gpu_cufftmp.sh              # submit the sweep
 #     DRY_RUN=1 ./submit_strong_gpu_cufftmp.sh    # print the plan, submit nothing
+#     PF_QOS= ./submit_strong_gpu_cufftmp.sh      # submit at normal priority
 #
 # ---------------------------------------------------------------------------
 # Why USE_CUFFTMP=1 is exported BEFORE sourcing env_gpu.sh
@@ -49,6 +50,28 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]:-$0}")"
 
 DRY_RUN="${DRY_RUN:-0}"
+
+# ---------------------------------------------------------------------------
+# QoS — `express` for very high scheduling priority (PC2 docs, "Quality-of-
+# Service (QoS) and Job Priorities"). Worth it here: these are five tiny jobs
+# and the whole point is to get them past a queue of 8-node reservations before
+# the deadline. Express draws on a PER-USER MONTHLY quota that does not
+# replenish until the 1st of next month, so check what is left first:
+#
+#     pc2status
+#
+# The back-fill is cheap against that quota — ~0.7 GPU-h expected across all
+# five jobs (Slurm accounts elapsed time, not the requested --time), so the
+# three 32-GPU points cost far less than a single full-length production run.
+#
+# Set PF_QOS= (empty) to fall back to normal priority. Do that if sbatch
+# rejects the submission with "Invalid qos specification" (quota exhausted or
+# express not granted for this account) or a QOSMax*PerJobLimit error — the
+# jobs are otherwise identical and will still run, just later.
+# ---------------------------------------------------------------------------
+PF_QOS="${PF_QOS-express}"
+QOS_ARG=()
+[ -n "$PF_QOS" ] && QOS_ARG=(--qos="$PF_QOS")
 
 # Must be set BEFORE sourcing env_gpu.sh — it gates the NVHPC module load and
 # selects the build_gpu_cufftmp build dir. Exported so job_gpu.slurm inherits it.
@@ -120,7 +143,7 @@ POINTS=(
   "1536  8 00:02:00 25"
 )
 
-echo ">> cuFFTMp back-fill — ${#POINTS[@]} missing points (USE_CUFFTMP=1, PF_SKIP_PARAFAFT=${PF_SKIP_PARAFAFT})"
+echo ">> cuFFTMp back-fill — ${#POINTS[@]} missing points (USE_CUFFTMP=1, PF_SKIP_PARAFAFT=${PF_SKIP_PARAFAFT}, qos=${PF_QOS:-<default>})"
 submitted=0
 for pt in "${POINTS[@]}"; do
   read -r N G TIME ITERS <<< "$pt"
@@ -128,7 +151,7 @@ for pt in "${POINTS[@]}"; do
   echo "   N=${N} g=${G} nodes=${NODES} tpn=${TPN} time=${TIME} iters=${ITERS}"
   [ "$DRY_RUN" = "1" ] && continue
 
-  sbatch -J "strgpu-N${N}-g${G}" \
+  sbatch -J "strgpu-N${N}-g${G}" "${QOS_ARG[@]}" \
     --nodes="${NODES}" --ntasks-per-node="${TPN}" --gres=gpu:a100:"${TPN}" --cpus-per-task=16 \
     --time="${TIME}" --output="results/logs/parafaft-%x-%j.out" \
     --export=ALL,PF_N="${N}",PF_ITERS="${ITERS}",PF_GPUS="${G}",PF_TAG=strong_gpu,USE_CUFFTMP=1,PF_SKIP_PARAFAFT="${PF_SKIP_PARAFAFT}" \
