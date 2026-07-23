@@ -1,0 +1,74 @@
+cpu-bind=MASK - n2gpu1223, task  0  0 [964603]: mask 0x|BB-BBBBB|BBBBBBBB||B-------|--------||--------|--------||--------|--------||||-BBBBBBB|BBBBBBBB||B-------|--------||--------|--------||--------|--------| set
+>> cuFFTMp include: /opt/software/pc2/EB-SW/software/NVHPC/25.3-CUDA-12.8.0/Linux_x86_64/25.3/math_libs/11.8/targets/x86_64-linux/include/cufftmp
+>> NVSHMEM include: /opt/software/pc2/EB-SW/software/NVHPC/25.3-CUDA-12.8.0/Linux_x86_64/25.3/comm_libs/11.8/nvshmem/include
+
+Currently Loaded Modules:
+  1) pc2fs
+  2) slurm/25.11.2-1
+  3) DefaultModules                                 (S)
+  4) compiler/GCCcore/14.2.0
+  5) devel/ncurses/6.5-GCCcore-14.2.0
+  6) lib/zlib/1.3.1-GCCcore-14.2.0
+  7) tools/bzip2/1.0.8-GCCcore-14.2.0
+  8) lib/libidn2/2.3.7-GCCcore-14.2.0
+  9) lib/libiconv/1.18-GCCcore-14.2.0
+ 10) lib/libunistring/1.3-GCCcore-14.2.0
+ 11) lib/libpsl/0.21.5-GCCcore-14.2.0
+ 12) system/OpenSSL/3
+ 13) tools/cURL/8.11.1-GCCcore-14.2.0
+ 14) tools/XZ/5.6.3-GCCcore-14.2.0
+ 15) tools/libarchive/3.7.7-GCCcore-14.2.0
+ 16) devel/CMake/3.31.3-GCCcore-14.2.0
+ 17) tools/binutils/2.42-GCCcore-14.2.0
+ 18) compiler/GCC/14.2.0
+ 19) tools/numactl/2.0.19-GCCcore-14.2.0
+ 20) lib/libxml2/2.13.4-GCCcore-14.2.0
+ 21) system/libpciaccess/0.18.1-GCCcore-14.2.0
+ 22) system/hwloc/2.11.2-GCCcore-14.2.0
+ 23) lib/libevent/2.1.12-GCCcore-14.2.0
+ 24) lib/UCX/1.18.0-GCCcore-14.2.0
+ 25) lib/libfabric/2.0.0-GCCcore-14.2.0
+ 26) lib/PMIx/5.0.6-GCCcore-14.2.0
+ 27) lib/PRRTE/3.0.8-GCCcore-14.2.0
+ 28) lib/UCC/1.3.0-GCCcore-14.2.0
+ 29) mpi/OpenMPI/5.0.7-GCC-14.2.0
+ 30) toolchain/gompi/2025a
+ 31) numlib/FFTW/3.3.10-GCC-14.2.0
+ 32) numlib/FFTW.MPI/3.3.10-gompi-2025a
+ 33) tools/Szip/2.1.1-GCCcore-14.2.0
+ 34) data/HDF5/1.14.6-gompi-2025a
+ 35) system/CUDA/12.8.0
+ 36) lib/GDRCopy/2.4.4-GCCcore-14.2.0
+ 37) lib/UCX-CUDA/1.18.0-GCCcore-14.2.0-CUDA-12.8.0
+ 38) compiler/NVHPC/25.3-CUDA-12.8.0
+
+  Where:
+   S:  Module is Sticky, requires --force to unload or purge
+=== strong_gpu: N=1024 gpus=2 nodes=1 tpn=2 iters=25 ===
+--- ParaFaFT+cuFFT SKIPPED (PF_SKIP_PARAFAFT=1); datapoint already collected ---
+--- cuFFTMp baseline ---
+cpu-bind=MASK - n2gpu1223, task  0  0 [964714]: mask 0x|BB-BBBBB|BBBBBBBB||B-------|--------||--------|--------||--------|--------||||--------|--------||--------|--------||--------|--------||--------|--------| set
+cpu-bind=MASK - n2gpu1223, task  1  1 [964715]: mask 0x|--------|--------||--------|--------||--------|--------||--------|--------||||-BBBBBBB|BBBBBBBB||B-------|--------||--------|--------||--------|--------| set
+Creating ParaFaFT...
+
+==========================================
+Benchmark: ParaFaFT R2C (cuFFTMp) 3D, N=1024, MPI procs=2, iterations=25
+Creating ParaFaFT...
+/dvs/p4/build/sw/rel/gpgpu/toolkit/r12.8/main_nvshmem/src/host/mem/mem_heap.cpp:1510: non-zero status: 2 cuMemCreate failed 
+
+/dvs/p4/build/sw/rel/gpgpu/toolkit/r12.8/main_nvshmem/src/host/mem/mem_heap.cpp:1510: non-zero status: 2 cuMemCreate failed 
+
+/dvs/p4/build/sw/rel/gpgpu/toolkit/r12.8/main_nvshmem/src/host/mem/mem_heap.cpp:1591: non-zero status: 7 allocate_physical_memory_to_heap failed
+
+/dvs/p4/build/sw/rel/gpgpu/toolkit/r12.8/main_nvshmem/src/host/mem/mem_heap.cpp:1591: non-zero status: 7 allocate_physical_memory_to_heap failed
+
+[/dvs/p4/build/sw/rel/gpgpu/toolkit/r12.8/main_nvshmem/src/host/coll/barrier/barrier.cpp:21] cuda failed with an illegal memory access was encountered 
+/dvs/p4/build/sw/rel/gpgpu/toolkit/r12.8/main_nvshmem/src/host/util/cs.cpp:21: non-zero status: 16: Device or resource busy, exiting... mutex destroy failed 
+
+[/dvs/p4/build/sw/rel/gpgpu/toolkit/r12.8/main_nvshmem/src/host/coll/barrier/barrier.cpp:21] cuda failed with an illegal memory access was encountered 
+/dvs/p4/build/sw/rel/gpgpu/toolkit/r12.8/main_nvshmem/src/host/util/cs.cpp:21: non-zero status: 16: Device or resource busy, exiting... mutex destroy failed 
+
+srun: error: n2gpu1223: task 0: Exited with exit code 255
+srun: Terminating StepId=33745215.0
+[2026-07-23T17:59:58.399] error: *** STEP 33745215.0 ON n2gpu1223 CANCELLED AT 2026-07-23T17:59:58 DUE TO TASK FAILURE ***
+srun: error: n2gpu1223: task 1: Exited with exit code 255
