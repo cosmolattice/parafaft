@@ -116,11 +116,37 @@ Auto-detects whichever collected CSVs exist (partial data is fine) and emits a
 **strong** (log-log, with 1/P ideal references) and a **weak** figure (log-log,
 flat = perfect). Three orthogonal visual channels keep the many lines readable:
 
-- **color** = configuration — CPU pure MPI (blue), CPU hybrid (green), GPU (red)
+- **panel** = configuration — CPU pure MPI, CPU hybrid, GPU (strong plot; colour
+  in the weak plot, which has a single panel)
 - **line style** = method — solid ParaFaFT, dashed baseline (FFTW-MPI / cuFFTMp)
-- **marker** = grid size N (strong plot)
+- **colour + marker** = grid size N (strong plot)
 
 A compact key legend explains the channels. Requires `matplotlib` and `numpy`.
+
+Both figures are drawn at their **final printed size** (`FULL_W` = 494.509 pt =
+`\textwidth` of the `cas-dc` paper), with type sizes in printed points, and are
+saved without `bbox_inches="tight"`. They therefore go into the paper as a bare
+`\includegraphics{...}` inside a `figure*` — **no `width=`**, or the type is
+rescaled and no longer matches the page. To refresh the paper figure:
+
+```bash
+cp results/plots/strong_scaling.pdf \
+   ~/Documents/Uni/Drafts/CosmolatticeGPUDraft/draft/figures/fft_strong_scaling.pdf
+```
+
+In the strong figure the three panels share one x range (1 GPU = 1 node, as in
+the text) and one log-y *scale*. The shared x-axis sits at 1e-1: the CPU panels
+floor there, while the GPU panel is drawn taller and its bottom spine repositioned
+onto that same line, so the axis aligns across all three and only the GPU plot
+continues below it — far enough to keep the sub-1e-1 cuFFTMp point at 4 GPUs in
+view. The strip that frees up under the CPU panels carries the legend.
+
+Following the companion TempLat figures, each panel is labelled below the axis in
+the unit its runs were launched in (**CPU cores**, **GPUs**) and restated above in
+**nodes**. Careful: the two node rows are *not* the same count at one x — the
+panels are aligned by the 1 GPU = 1 CPU node convention, whereas the GPU top row
+counts physical 4-GPU nodes (so 4 GPUs = 1 node, and the node-boundary rule sits
+between its 1 and 2).
 
 ## Files table addendum
 

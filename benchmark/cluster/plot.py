@@ -12,17 +12,25 @@ Consumes whatever `collect.sh` produced under <results>/:
 Missing files are skipped, so partial data still plots. Emits two figures
 (strong_scaling.{png,pdf}, weak_scaling.{png,pdf}) into <results>/plots/.
 
-Visual encoding (three orthogonal channels):
-    color     = configuration : CPU (pure MPI) / CPU (hybrid) / GPU
-    linestyle = method        : solid = ParaFaFT, dashed = baseline (FFTW-MPI / cuFFTMp)
-    marker    = grid size N
+Visual encoding:
+    panel        = configuration : CPU (pure MPI) / CPU (hybrid) / GPU  (strong)
+    color+marker = grid size N   (strong; configuration carries colour in weak)
+    linestyle    = method        : solid = ParaFaFT, dashed = baseline (FFTW-MPI / cuFFTMp)
 
 Points whose std/mean exceeds MAX_REL_STD are dropped (and reported on stderr) —
 a single noisy run otherwise draws an error bar spanning the whole log axis.
 
-The x-axis is COMPUTE NODES: CPU series use (mpi_procs * threads) / CORES_PER_NODE so
-pure MPI and hybrid line up at matched hardware, and GPU series count 1 GPU as 1 node.
-A secondary top axis restates the CPU side in cores.
+Panels are positioned in COMPUTE NODES: CPU series use (mpi_procs * threads) /
+CORES_PER_NODE so pure MPI and hybrid line up at matched hardware, and GPU series
+count 1 GPU as 1 node. Each panel is then LABELLED in the unit its runs were
+launched in — CPU cores / GPUs below the axis — with a secondary top row restating
+that in nodes, as the companion TempLat figures do. Note the two node rows are not
+the same count at one x: the GPU row counts physical GPUS_PER_NODE-GPU nodes.
+
+Both figures are authored at their FINAL printed size (FULL_W = the paper's
+\textwidth) with type sizes in printed points, and saved without bbox_inches=
+"tight" — see PAPER_THEME and the geometry constants below. They go into the
+paper as a bare \includegraphics{...} inside a figure*, with no width=.
 
     python3 plot.py [results_dir]        # default: <script_dir>/results
 
@@ -52,17 +60,48 @@ C_INK2 = "#52514e"    # tick labels / secondary annotation
 C_STEP = "#0b0b0b"    # primary ink
 SURFACE = "#ffffff"   # page white == marker-halo colour
 
+# ------------------------------------------------------ paper geometry ------
+# As in plot_style.py: figures are authored at their FINAL printed size, so they
+# enter the paper with a bare \includegraphics{...} — no width=, no rescaling,
+# hence identical type size in every figure. Measured from draft/paper.tex
+# (cas-dc, a4paper): \columnwidth = 238.254 pt, \textwidth = 494.509 pt, at
+# TeX's 72.27 pt/in. A `figure*` spans FULL_W, a single-column `figure` COL_W.
+COL_W = 238.25444 / 72.27    # 3.297 in — one column
+FULL_W = 494.50888 / 72.27   # 6.842 in — full text width (figure*)
+
+# Type sizes, in pt, as printed — the paper sets captions at 9 pt, footnotesize
+# at 8 pt. Everything in the figures derives from these three. Previously the
+# figure was drawn at 13 pt on a 13.3 in canvas and shrunk to 1.05\linewidth in
+# LaTeX (a factor ~0.54), which landed the labels at ~7 pt and the ticks at
+# ~5.4 pt — smaller than anything else on the page, and different per figure.
+FS_LABEL = 8    # axis labels, legend entries
+FS_TICK = 7     # tick labels, panel tags
+FS_CORES = 6    # top cores row — a step down so its 5-digit labels fit one line
+FS_SMALL = 6.5  # secondary annotations (node boundary)
+FS_TITLE = 9    # titles, matching the caption
+
 PAPER_THEME = {
     "figure.facecolor": SURFACE, "savefig.facecolor": SURFACE, "figure.dpi": 150,
-    "font.size": 13,
-    "axes.facecolor": SURFACE, "axes.edgecolor": C_AXIS, "axes.linewidth": 0.8,
+    # NOT "tight": tight cropping trims each figure to its own content, so two
+    # figures declared at the same figsize come out at different aspect ratios
+    # and no longer align when set at equal width in LaTeX. Keeping the declared
+    # canvas exact makes figsize the single source of truth.
+    "savefig.bbox": "standard",
+    "font.size": FS_LABEL,
+    "axes.facecolor": SURFACE, "axes.edgecolor": C_AXIS, "axes.linewidth": 0.6,
     "axes.spines.right": False, "axes.spines.top": False,
     "axes.grid": True, "axes.axisbelow": True, "axes.grid.which": "major",
-    "axes.labelcolor": C_STEP, "axes.titlecolor": C_STEP, "axes.titlesize": 14,
-    "grid.color": C_GRID, "grid.linewidth": 0.6, "grid.linestyle": ":",
+    "axes.labelsize": FS_LABEL,
+    "axes.labelcolor": C_STEP, "axes.titlecolor": C_STEP, "axes.titlesize": FS_TITLE,
+    "grid.color": C_GRID, "grid.linewidth": 0.5, "grid.linestyle": ":",
     "xtick.color": C_AXIS, "ytick.color": C_AXIS,
     "xtick.labelcolor": C_INK2, "ytick.labelcolor": C_INK2,
-    "legend.frameon": False, "legend.labelcolor": C_INK2, "legend.fontsize": 12,
+    "xtick.labelsize": FS_TICK, "ytick.labelsize": FS_TICK,
+    "xtick.major.size": 2.5, "ytick.major.size": 2.5,
+    "xtick.major.width": 0.6, "ytick.major.width": 0.6,
+    "legend.frameon": False, "legend.labelcolor": C_INK2, "legend.fontsize": FS_TICK,
+    "legend.title_fontsize": FS_TICK,
+    "lines.linewidth": 1.2, "lines.markersize": 3.4,
 }
 
 # Time is one r2c + one c2r transform (seconds). Config colours (weak plot):
@@ -75,19 +114,18 @@ MARKERS = ["o", "s", "D", "^", "v", "P", "X", "*"]  # assigned per distinct N
 
 def marker_kw(color, marker="o"):
     """Solid line + white-haloed markers, matching plot_style.marker_kw."""
-    return dict(color=color, ls="-", lw=2.0, marker=marker, ms=7,
-                markeredgecolor=SURFACE, markeredgewidth=1.8)
+    return dict(color=color, ls="-", lw=1.2, marker=marker, ms=3.4,
+                markeredgecolor=SURFACE, markeredgewidth=0.9)
 
 
 def ideal_kw():
     """Muted dotted reference line, as the companion figures draw ideal curves."""
-    return dict(color=C_IDEAL, ls=":", lw=1.6)
+    return dict(color=C_IDEAL, ls=":", lw=1.0)
 
 # One size for every x tick label (nodes below, CPU cores above) and one for the
-# x-axis captions, so the two rows never look like different type. Held a little
-# below the body size (13) because the cores row runs to 5-digit numbers.
-XTICK_FS = 10
-XLABEL_FS = 12
+# x-axis captions, so the two rows never look like different type.
+XTICK_FS = FS_TICK
+XLABEL_FS = FS_LABEL
 
 # Points whose std exceeds this fraction of the mean are dropped: on a log axis a
 # single run that hit a noisy node produces an error bar spanning the whole figure
@@ -182,54 +220,62 @@ def color_map(results, keys):
 # --- styling shared by both plots --------------------------------------------
 # ParaFaFT: solid, white-haloed markers (marker_kw). Baseline: dashed and
 # lighter, the same halo, so a curve and its baseline read as one pair.
-PARA = dict(ls="-", lw=2.0, ms=7, markeredgecolor=SURFACE, markeredgewidth=1.8, capsize=2.5)
-BASE = dict(ls="--", lw=1.4, ms=6, markeredgecolor=SURFACE, markeredgewidth=1.4,
-            alpha=0.8, capsize=2)
+PARA = dict(ls="-", lw=1.2, ms=3.4, markeredgecolor=SURFACE, markeredgewidth=0.9, capsize=1.5)
+BASE = dict(ls="--", lw=0.9, ms=2.9, markeredgecolor=SURFACE, markeredgewidth=0.8,
+            alpha=0.8, capsize=1.2)
+
+
+# Sub-node counts read better as vulgar fractions than as "0.25" — the companion
+# TempLat figures label their quarter- and half-node points this way.
+_FRACTIONS = {0.125: "⅛", 0.25: "¼", 0.5: "½", 0.75: "¾"}
 
 
 def _fmt(v):
-    """Plain integer when the value is one, else a short decimal (e.g. 0.5 nodes)."""
-    return f"{int(round(v))}" if abs(v - round(v)) < 1e-9 else f"{v:g}"
+    """Plain integer when the value is one, a vulgar fraction for the common
+    sub-unit counts, else a short decimal."""
+    if abs(v - round(v)) < 1e-9:
+        return f"{int(round(v))}"
+    for q, s in _FRACTIONS.items():
+        if abs(v - q) < 1e-9:
+            return s
+    return f"{v:g}"
 
 
-def nodes_ticks(ax):
-    """Tick the x-axis at powers of two, labelled as plain node counts.
+def dual_axis(ax, bottom, top):
+    """Tick x at powers of two and label those same positions twice: a primary row
+    below the axis and a secondary one above it.
 
-    Returns the node positions so callers that want a second (cores) axis can
-    reuse them, keeping both rows of ticks on the same grid.
+    `bottom` and `top` are each (factor, fontsize) — the label is the x value times
+    factor, so one axis carries the unit the runs were launched in (CPU cores, GPUs)
+    and the other restates it in nodes. This is the layout of the companion TempLat
+    scaling figures: the hardware unit below, nodes above.
+
+    Both rows sit on the same tick positions, so they read as a single grid, and both
+    use plain integers rather than 2^k exponents. The CPU cores row runs to five
+    digits ("16384") on a column-width panel where the ticks are ~a fifth of an inch
+    apart, which is why the caller sets it a step smaller (FS_CORES).
     """
     lo, hi = ax.get_xlim()
-    nodes = [2.0 ** k for k in range(int(np.floor(np.log2(lo))), int(np.ceil(np.log2(hi))) + 1)]
-    ax.set_xticks(nodes)
-    ax.set_xticklabels([_fmt(n) for n in nodes])
-    ax.tick_params(axis="x", labelsize=XTICK_FS)
+    ticks = [2.0 ** k for k in range(int(np.floor(np.log2(lo))), int(np.ceil(np.log2(hi))) + 1)]
+
+    factor, fs = bottom
+    ax.set_xticks(ticks)
+    ax.set_xticklabels([_fmt(t * factor) for t in ticks])
+    ax.tick_params(axis="x", labelsize=fs)
     ax.xaxis.set_minor_locator(matplotlib.ticker.NullLocator())
-    ax.set_xlim(lo, hi)  # set_xticks can widen the view; pin it back
-    return nodes
 
-
-def cores_axis(ax, show_label=True):
-    """Label the nodes axis with plain numbers and add a top axis in CPU cores.
-
-    The cores axis is only meaningful for the CPU series (a GPU node contributes its
-    GPUs, not cores), hence the explicit 'CPU' in the label; nodes is the common one.
-    Both axes tick at the same powers of two so they read as a single grid, and both
-    use plain integers rather than 2^k / decade exponents. Faceted CPU panels share
-    an identical top axis, so show_label=False suppresses the redundant caption on
-    all but one panel.
-    """
-    lo, hi = ax.get_xlim()
-    nodes = nodes_ticks(ax)
-
-    sec = ax.secondary_xaxis("top", functions=(lambda n: n * CORES_PER_NODE,
-                                               lambda c: c / CORES_PER_NODE))
-    if show_label:
-        sec.set_xlabel(f"CPU cores ({CORES_PER_NODE}/node)", fontsize=XLABEL_FS, labelpad=6)
-    sec.tick_params(axis="x", length=3, labelsize=XTICK_FS, colors=C_AXIS, labelcolor=C_INK2)
-    sec.set_xticks([n * CORES_PER_NODE for n in nodes])
-    sec.set_xticklabels([_fmt(n * CORES_PER_NODE) for n in nodes])
+    # Identity transform: the secondary axis shares the parent's data coordinates
+    # and only the LABELS are rescaled, so the two rows cannot drift apart.
+    factor, fs = top
+    sec = ax.secondary_xaxis("top", functions=(lambda v: v, lambda v: v))
+    sec.set_xticks(ticks)
+    sec.set_xticklabels([_fmt(t * factor) for t in ticks])
+    # length=2 and the smaller label size are what plot_style.nodes_top_axis uses:
+    # the secondary row is set a step below the primary one so it reads as a
+    # restatement rather than a second, competing axis.
+    sec.tick_params(axis="x", length=2, labelsize=fs, colors=C_AXIS, labelcolor=C_INK2)
     sec.xaxis.set_minor_locator(matplotlib.ticker.NullLocator())
-    sec.spines["top"].set(color=C_AXIS, linewidth=0.8)
+    sec.spines["top"].set(color=C_AXIS, linewidth=0.6)
     ax.set_xlim(lo, hi)  # set_xticks can widen the view; pin it back
     return sec
 
@@ -250,9 +296,12 @@ def multinode_divider(ax, x):
         return  # sweep does not bracket the boundary; nothing to mark
 
     xb = np.sqrt(lo * hi)  # geometric mean of the bracketing node counts
-    ax.axvline(xb, color=C_AXIS, lw=0.8, zorder=1)
-    ax.annotate(" node boundary →", (xb, 0.02), xycoords=ax.get_xaxis_transform(),
-                ha="left", va="bottom", color=C_INK2, fontsize=10)
+    ax.axvline(xb, color=C_AXIS, lw=0.6, zorder=1)
+    # Label at the TOP of the panel: the GPU data maxes around 1 s, so the whole
+    # upper part of the axis is empty, whereas the bottom is where the sub-1e-1
+    # extension, its tick labels and the "GPUs" caption all live.
+    ax.annotate(" node boundary →", (xb, 0.97), xycoords=ax.get_xaxis_transform(),
+                ha="left", va="top", color=C_INK2, fontsize=FS_SMALL)
 
 
 def key_legends(ax, present_configs, nmap, ideal=True):
@@ -262,15 +311,15 @@ def key_legends(ax, present_configs, nmap, ideal=True):
     savefig(bbox_inches="tight") when added as axes children, but kept as fig.legends.
     """
     fig = ax.figure
-    color_h = [Line2D([], [], color=c, lw=2.5, label=l) for c, l in present_configs]
-    method_h = [Line2D([], [], color=C_INK2, ls="-", lw=2.0, label="ParaFaFT"),
-                Line2D([], [], color=C_INK2, ls="--", lw=1.4, alpha=0.8,
+    color_h = [Line2D([], [], color=c, lw=1.4, label=l) for c, l in present_configs]
+    method_h = [Line2D([], [], color=C_INK2, ls="-", lw=1.2, label="ParaFaFT"),
+                Line2D([], [], color=C_INK2, ls="--", lw=0.9, alpha=0.8,
                        label="FFTW-MPI / cuFFTMp")]
     if ideal:
-        method_h.append(Line2D([], [], color=C_IDEAL, ls=":", lw=1.6, label="ideal"))
+        method_h.append(Line2D([], [], color=C_IDEAL, ls=":", lw=1.0, label="ideal"))
 
     def block(handles, y, title):
-        leg = fig.legend(handles=handles, loc="upper left", bbox_to_anchor=(0.76, y),
+        leg = fig.legend(handles=handles, loc="upper left", bbox_to_anchor=(0.755, y),
                          title=title)
         leg.get_title().set_color(C_STEP)
 
@@ -286,10 +335,10 @@ def key_legends(ax, present_configs, nmap, ideal=True):
 def panel_label(ax, text):
     """Bold config tag in a white rounded box, tucked into the top-left corner —
     matching plot_style.panel_label of the companion figures."""
-    ax.text(0.028, 0.94, text, transform=ax.transAxes, ha="left", va="top",
-            fontsize=12, fontweight="bold", color=C_STEP, zorder=6,
-            bbox=dict(boxstyle="round,pad=0.35", facecolor=SURFACE,
-                      edgecolor=C_AXIS, linewidth=0.8))
+    ax.text(0.028, 0.965, text, transform=ax.transAxes, ha="left", va="top",
+            fontsize=FS_TICK, fontweight="bold", color=C_STEP, zorder=6,
+            bbox=dict(boxstyle="round,pad=0.28", facecolor=SURFACE,
+                      edgecolor=C_AXIS, linewidth=0.6))
 
 
 def ideal_ref(ax, groups):
@@ -302,29 +351,83 @@ def ideal_ref(ax, groups):
         ax.plot(x, t[0] * x[0] / x, zorder=0, **ideal_kw())
 
 
-def strong_legends(fig, cmap, nmap):
-    """One shared legend to the right of the panels: grid N (colour+marker) and
-    method (line style). Config is the panel identity now, so it needs no key;
-    'ideal' is labelled inline on each panel, so it is absent here too."""
-    n_h = [Line2D([], [], color=cmap[N], marker=nmap[N], ls="-", lw=2.0,
-                  markeredgecolor=SURFACE, markeredgewidth=1.6, label=f"{N}³")
-           for N in sorted(cmap)]
-    m_h = [Line2D([], [], color=C_INK2, ls="-", lw=2.0, label="ParaFaFT"),
-           Line2D([], [], color=C_INK2, ls="--", lw=1.4, alpha=0.8,
-                  label="FFTW-MPI /\ncuFFTMp")]
+def strong_legends(fig, cmap, nmap, anchors, y_center, title_col):
+    """Two legend blocks in the strip under the CPU panels, each captioned on the
+    LEFT of its entries:
 
-    l1 = fig.legend(handles=n_h, loc="upper left", bbox_to_anchor=(0.87, 0.84),
-                    title="grid $N$")
-    l2 = fig.legend(handles=m_h, loc="upper left", bbox_to_anchor=(0.87, 0.42),
-                    title="method")
-    for leg in (l1, l2):
-        leg.get_title().set_color(C_STEP)
+        grid N    1024³  2048³        method    ParaFaFT
+                  1536³  4096³                  FFTW-MPI / cuFFTMp
+
+    matplotlib only ever sets a legend title *above* its entries, so the caption
+    is drawn as figure text and the legend itself is titleless, anchored
+    `title_col` to the caption's right. Both are centred on the same `y_center`,
+    which is what puts the caption level with the middle of its two rows.
+
+    Config is the panel identity now, so it needs no key, and 'ideal' is read off
+    the dotted style inline, so it is absent here too.
+
+    `anchors` are the left edges of the two captions; all three positional
+    arguments are figure coords.
+    """
+    n_h = [Line2D([], [], color=cmap[N], marker=nmap[N], ls="-", lw=1.2,
+                  markeredgecolor=SURFACE, markeredgewidth=0.8, label=f"{N}³")
+           for N in sorted(cmap)]
+    m_h = [Line2D([], [], color=C_INK2, ls="-", lw=1.2, label="ParaFaFT"),
+           Line2D([], [], color=C_INK2, ls="--", lw=0.9, alpha=0.8,
+                  label="FFTW-MPI / cuFFTMp")]
+
+    # borderpad=0: with the caption outside, the handles must start exactly at
+    # the anchor, or the two blocks no longer share one indent.
+    common = dict(handletextpad=0.5, borderaxespad=0, borderpad=0.0,
+                  labelspacing=0.6, columnspacing=1.1)
+    blocks = [("grid $N$", n_h, 2, 1.4), ("method", m_h, 1, 1.7)]
+    for x, (title, handles, ncol, hlen) in zip(anchors, blocks):
+        fig.legend(handles=handles, loc="center left", ncol=ncol,
+                   bbox_to_anchor=(x + title_col, y_center),
+                   handlelength=hlen, **common)
+        fig.text(x, y_center, title, ha="left", va="center",
+                 fontsize=FS_TICK, color=C_STEP)
+
+
+# --- strong-scaling figure geometry (inches, on the FULL_W canvas) -----------
+# The panels are placed by hand rather than by subplots(): the three share a
+# common log-y *scale* (same inches per decade) and a common x range, but the GPU
+# panel is drawn taller so it reaches further down — to where the cuFFTMp point at
+# 4 GPUs lives — while the CPU panels floor at Y_AXIS. Each group carries its x
+# axis on its own floor, so the GPU ticks/labels sit at the bottom of the GPU
+# panel, one tick+caption row lower than the CPU ones. The strip that frees up
+# under the (shorter) CPU panels carries the legend.
+S_FIG_H = 2.8      # total canvas height; ~1/4 of \textheight, so two still float
+S_M_LEFT = 0.52     # y label + "10^-1"-wide tick labels
+S_M_RIGHT = 0.07    # half of the last x tick label
+S_M_TOP = 0.31      # the FS_SMALL nodes tick row + its caption
+S_GAP = 0.09        # between panels
+S_TICK_ROW = 0.19   # x tick labels below the shared axis line
+S_CAP_ROW = 0.17    # the "nodes"/"GPUs" caption, below the tick labels
+S_LEG_TITLE = 0.46  # width reserved for the "grid N" / "method" caption column
+# The two-row legend block (~0.38 in) is not reserved: it lives in the strip the
+# taller GPU panel frees under the CPU captions, whose height falls out of the
+# geometry below. Y_BOT_GPU sets it — push the GPU floor up and it shrinks.
+Y_AXIS = 1e-1       # the CPU floor, and where the CPU x axis is drawn
+Y_BOT_GPU = 2.2e-2  # the GPU floor: its own x axis, this far below the CPU one.
+                    # Low enough that the 4-GPU cuFFTMp point clears the spine now
+                    # that the spine is drawn there rather than a decade above.
+Y_HEADROOM = 1.8    # slack above the slowest point, for the panel tags
+X_HI_GPU = 64 + 32     # the GPU panel stops just past its last point (64 GPUs) rather
+                    # than carrying the CPU panels' empty run-out to 128 nodes.
 
 
 def plot_strong(results, outdir):
     """Strong scaling, faceted by configuration.
 
-    One panel per backend (CPU pure-MPI / CPU hybrid / GPU) sharing a log y-axis.
+    One panel per backend (CPU pure-MPI / CPU hybrid / GPU) on a common log-y
+    scale and a common x scale — one GPU counts as one node, as in the text, so
+    equal x means equal hardware in every panel. The GPU panel is truncated at
+    X_HI_GPU, since its sweep stops at 64 GPUs while the CPU one runs on. The CPU
+    panels floor at y = 1e-1; the GPU panel runs half a decade further down, to
+    keep the sub-1e-1 cuFFTMp point in view, and carries its x axis on its own
+    floor rather than on the CPU one. Inches per decade are shared, so a given
+    time still sits at the same height in all three.
     Within a panel colour = grid N and line style = method (solid ParaFaFT, dashed
     baseline), so a ParaFaFT curve and its baseline sit right on top of each other
     and no line ever crosses between configurations. The combined single-axes
@@ -343,74 +446,137 @@ def plot_strong(results, outdir):
         ("strong_gpu__bench_r2c_cuda", "GPU", None, False),
     ]
     panels = [p for p in panels if results.get(p[0])]
-    n = len(panels)
-    fig, axes = plt.subplots(1, n, figsize=(4.5 * n, 5.8), sharey=True, squeeze=False)
-    axes = axes[0]
-    fig.subplots_adjust(left=0.07, right=0.86, top=0.82, bottom=0.15, wspace=0.08)
 
+    # Gather every curve first: the panel geometry follows from the data extent,
+    # so nothing can be drawn before the axes rectangles are known.
     para = ("parafaft_mean", "parafaft_std")
-    for i, (ax, (key, title, base, is_cpu)) in enumerate(zip(axes, panels)):
+    drawn = []  # (title, is_cpu, ParaFaFT groups, baseline groups)
+    for key, title, base, is_cpu in panels:
         d = results[key]
-        para_groups = groups_by_N(d, *para, tag=f"{title} ParaFaFT")
-        for N, x, t, e in para_groups:
-            ax.errorbar(x, t, yerr=e, marker=nmap[N], color=cmap[N], **PARA)
-        if not is_cpu and para_groups:  # GPU node boundary, once per panel
-            multinode_divider(ax, np.concatenate([g[1] for g in para_groups]))
-
+        pg = groups_by_N(d, *para, tag=f"{title} ParaFaFT")
         if base:  # in-file baseline (FFTW-MPI)
-            for N, x, t, e in groups_by_N(d, *base, tag=f"{title} baseline"):
-                ax.errorbar(x, t, yerr=e, marker=nmap[N], color=cmap[N], **BASE)
+            bg = groups_by_N(d, *base, tag=f"{title} baseline")
         else:     # GPU baseline (cuFFTMp) lives in a separate file
             mp = results.get("strong_gpu__bench_r2c_cufftmp")
-            if mp:
-                for N, x, t, e in groups_by_N(mp, "parafaft_mean", "parafaft_std", tag="cuFFTMp"):
-                    ax.errorbar(x, t, yerr=e, marker=nmap.get(N, "s"),
-                                color=cmap.get(N, "0.4"), **BASE)
+            bg = groups_by_N(mp, *para, tag="cuFFTMp") if mp else []
+        drawn.append((title, is_cpu, pg, bg))
+
+    every = [g for _, _, pg, bg in drawn for g in pg + bg]
+    ytop = Y_HEADROOM * max(float(np.max(t + e)) for _, _, t, e in every)
+    xlo = min(float(np.min(x)) for _, x, _, _ in every)
+    xhi = max(float(np.max(x)) for _, x, _, _ in every)
+    xlim = (xlo / 1.35, xhi * 1.35)
+
+    fig = plt.figure(figsize=(FULL_W, S_FIG_H))
+    fx, fy = lambda v: v / FULL_W, lambda v: v / S_FIG_H  # inches -> figure coords
+    n = len(drawn)
+    w = (FULL_W - S_M_LEFT - S_M_RIGHT - (n - 1) * S_GAP) / n
+
+    # Vertical layout, in inches from the canvas floor upward. The GPU panel is
+    # the tall one and sets the geometry: it runs from just above the bottom
+    # tick+caption rows (which are its own x axis) up to `top`. The CPU floor then
+    # follows from the shared log scale — Y_AXIS is half a decade above the GPU
+    # floor, so h ∝ #decades and a given time is at the same height everywhere —
+    # and the rows below the CPU floor plus the leftover strip carry the legend.
+    top = S_FIG_H - S_M_TOP
+    gpu_axis_y = S_CAP_ROW + S_TICK_ROW      # GPU x-axis line height
+    h_gpu = top - gpu_axis_y
+    h_unit = h_gpu / np.log10(ytop / Y_BOT_GPU)  # inches per decade, common to all
+    h_cpu = h_unit * np.log10(ytop / Y_AXIS)
+    axis_y = top - h_cpu                     # CPU x-axis line height
+
+    axes = []
+    for i, (title, is_cpu, pg, bg) in enumerate(drawn):
+        h = h_cpu if is_cpu else h_gpu
+        ax = fig.add_axes([fx(S_M_LEFT + i * (w + S_GAP)), fy(top - h), fx(w), fy(h)])
+        axes.append(ax)
+
+        for N, x, t, e in pg:
+            ax.errorbar(x, t, yerr=e, marker=nmap[N], color=cmap[N], **PARA)
+        for N, x, t, e in bg:
+            ax.errorbar(x, t, yerr=e, marker=nmap.get(N, "s"),
+                        color=cmap.get(N, "0.4"), **BASE)
+        if not is_cpu and pg:  # GPU node boundary, once per panel
+            multinode_divider(ax, np.concatenate([g[1] for g in pg]))
 
         ax.set_xscale("log", base=2)
         ax.set_yscale("log")
-        # Top cores ticks on the CPU panels; the caption is drawn once, figure-
-        # centred (below), so it lines up with the bottom '# nodes' label.
-        cores_axis(ax, show_label=False) if is_cpu else nodes_ticks(ax)
+        # Shared x range, except that the GPU panel is cut just past its last point:
+        # its sweep ends at 64 GPUs, so the CPU run-out beyond that is empty space.
+        ax.set_xlim(xlim[0], xlim[1] if is_cpu else min(xlim[1], X_HI_GPU))
+        ax.set_ylim(Y_AXIS if is_cpu else Y_BOT_GPU, ytop)
+        # The unit each configuration was launched in goes below the axis, nodes
+        # above: CPU cores / nodes, GPUs / nodes. Captions are drawn once per
+        # group, figure-centred (below), rather than per panel.
+        if is_cpu:
+            dual_axis(ax, bottom=(CORES_PER_NODE, FS_CORES), top=(1.0, FS_SMALL))
+        else:
+            dual_axis(ax, bottom=(1.0, FS_TICK), top=(1.0 / GPUS_PER_NODE, FS_SMALL))
         # One dotted 1/p slope guide per panel (all N share the -1 slope on log-log),
-        # anchored to the widest ParaFaFT sweep and labelled inline rather than in
-        # the legend, as the companion figures do.
-        ideal_ref(ax, para_groups)
+        # anchored to each sweep's own first point and labelled inline rather than
+        # in the legend, as the companion figures do.
+        ideal_ref(ax, pg)
         panel_label(ax, title)
+        if i:
+            ax.tick_params(axis="y", labelleft=False)
 
-    # Floor the y-axis: the ideal references keep falling past the last measured
-    # point; letting them set the limit wastes a third of the figure on empty
-    # space. The fastest measurement (GPU at 32) is ~8e-2, so this clips only tails.
-    axes[0].set_ylim(bottom=4e-2)
     axes[0].set_ylabel("time per r2c+c2r transform [s]")
 
-    # x captions belong to their own unit: nodes/CPU-cores span the CPU panels,
-    # GPUs the GPU panel. Centre each over the panels it describes.
+    # x captions belong to their own unit: CPU cores span the CPU panels, GPUs the
+    # GPU panel, and each group restates itself in nodes on top. Centre each over
+    # the panels it describes; both rows sit at one height across the figure.
+    #
+    # The two 'nodes' rows are NOT the same count at the same x: the panels are
+    # aligned by the paper's 1 GPU = 1 CPU node convention, whereas the GPU top row
+    # counts physical 4-GPU nodes. Hence a caption per group rather than one shared
+    # one, each naming the ratio on the row that carries the launch unit.
     def span_center(group):
         pos = [ax.get_position() for ax in group]
         return 0.5 * (min(p.x0 for p in pos) + max(p.x1 for p in pos))
 
-    cpu_axes = [ax for ax, p in zip(axes, panels) if p[3]]
-    if cpu_axes:
-        cx = span_center(cpu_axes)
-        fig.text(cx, 0.03, "nodes", ha="center", va="bottom",
-                 fontsize=XLABEL_FS, color=C_STEP)
-        fig.text(cx, 0.915, f"CPU cores ({CORES_PER_NODE}/node)", ha="center",
-                 va="bottom", fontsize=XLABEL_FS, color=C_STEP)
-    for ax, p in zip(axes, panels):
-        if not p[3]:  # GPU panel: one GPU per rank, so the axis counts GPUs
-            fig.text(span_center([ax]), 0.03, "GPUs", ha="center", va="bottom",
-                     fontsize=XLABEL_FS, color=C_STEP)
+    top_cap_y = S_FIG_H - 0.115              # baseline of the "nodes" row
+    cpu_axes = [ax for ax, d in zip(axes, drawn) if d[1]]
 
-    strong_legends(fig, cmap, nmap)
+    # The secondary caption is set at FS_SMALL like its tick row, matching
+    # plot_style.nodes_top_axis; the primary one keeps the axis-label size. Each
+    # group's caption hangs a tick row under ITS OWN axis line, so the GPU one
+    # follows the GPU axis down while both 'nodes' rows stay on the top edge.
+    def captions(group, bottom_text, group_axis_y):
+        cx = span_center(group)
+        for y, text, fs in ((group_axis_y - S_TICK_ROW - S_CAP_ROW, bottom_text, XLABEL_FS),
+                            (top_cap_y, "nodes", FS_SMALL)):
+            fig.text(cx, fy(y), text, ha="center", va="bottom",
+                     fontsize=fs, color=C_STEP)
+
+    if cpu_axes:
+        captions(cpu_axes, f"CPU cores ({CORES_PER_NODE}/node)", axis_y)
+    for ax, d in zip(axes, drawn):
+        if not d[1]:  # GPU panel: one GPU per rank, so the axis counts GPUs
+            captions([ax], "GPUs", gpu_axis_y)
+
+    # Legend strip: the space below the CPU caption row that the taller GPU panel
+    # frees. One block per CPU panel, each starting at its panel's left edge, so
+    # the two captions sit on the same grid as the panels above them. Centre it in
+    # whatever that strip turns out to be rather than in a fixed band, since the
+    # CPU floor now floats with the data extent.
+    if cpu_axes:
+        xs = [ax.get_position().x0 for ax in cpu_axes]
+        if len(xs) < 2:  # a single CPU panel still has to hold both blocks
+            p = cpu_axes[0].get_position()
+            xs = [p.x0, p.x0 + 0.5 * p.width]
+        leg_top = axis_y - S_TICK_ROW - S_CAP_ROW
+        strong_legends(fig, cmap, nmap, xs, fy(leg_top / 2), fx(S_LEG_TITLE))
     _save(fig, outdir, "strong_scaling")
 
 
 def plot_weak(results, outdir):
     # Each weak point is a different N, so N is not a useful marker channel here;
     # marker just tracks configuration for redundancy with color.
-    fig, ax = plt.subplots(figsize=(10, 5.5))
-    fig.subplots_adjust(left=0.08, right=0.73, top=0.92, bottom=0.12)
+    # Full text width (figure*) at final print size, as the strong figure: one
+    # panel plus the three key blocks, which need the right ~quarter of the
+    # canvas. Flat enough that two such figures still float on a page.
+    fig, ax = plt.subplots(figsize=(FULL_W, 2.75))
+    fig.subplots_adjust(left=0.085, right=0.745, top=0.845, bottom=0.155)
 
     def clean(data, col, tag):
         t = data[col[0]]
@@ -449,10 +615,15 @@ def plot_weak(results, outdir):
 
     ax.set_xscale("log", base=2)
     ax.set_yscale("log")
-    ax.set_xlabel("nodes  (grid $N$ grows to keep work/process fixed)", fontsize=XLABEL_FS)
+    ax.set_xlabel(f"CPU cores ({CORES_PER_NODE}/node)  —  grid $N$ grows to keep "
+                  "work/process fixed", fontsize=XLABEL_FS)
     ax.set_ylabel("time per r2c+c2r transform [s]")
-    ax.set_title("ParaFaFT weak scaling (3D R2C)", pad=28)
-    cores_axis(ax)
+    # No in-figure title: at final print size the space above the panel belongs
+    # to the nodes axis, and what the figure shows is the caption's job — the
+    # strong-scaling figure is titleless for the same reason.
+    # Same row order as the strong figure: launch unit below, nodes above.
+    sec = dual_axis(ax, bottom=(CORES_PER_NODE, FS_CORES), top=(1.0, FS_SMALL))
+    sec.set_xlabel("nodes", fontsize=FS_SMALL, labelpad=3)
     key_legends(ax, present, nmap=None)
     _save(fig, outdir, "weak_scaling")
 
@@ -460,10 +631,10 @@ def plot_weak(results, outdir):
 def _save(fig, outdir, stem):
     for ext in ("png", "pdf"):
         path = os.path.join(outdir, f"{stem}.{ext}")
-        # bbox_inches="tight" expands the saved canvas to include the legends,
-        # which sit outside the axes at a fixed point size; without it a smaller
-        # figsize crops them (the margin is fractional, the legend text is not).
-        fig.savefig(path, dpi=150, bbox_inches="tight")
+        # No bbox_inches="tight": the canvas IS the printed size (see PAPER_THEME),
+        # everything — legends included — is laid out inside it, and cropping would
+        # make the delivered width depend on the labels rather than on figsize.
+        fig.savefig(path, dpi=300)
         print(f">> wrote {path}")
     plt.close(fig)
 
